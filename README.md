@@ -8,7 +8,7 @@ Uses a two-stage pipeline:
 
 The AI never creates, modifies, or overrides a match — it only evaluates and explains BGCC's output. See `architecture.md` for full pipeline details.
 
-> FYP1 prototype — Quest International University (QIU)
+> Midsem Checkpoint Proof of Concept — Quest International University (QIU)
 
 ## Setup
 
