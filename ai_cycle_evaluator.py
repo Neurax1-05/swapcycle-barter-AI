@@ -45,6 +45,10 @@ IMPORTANT RULES:
   (urgency, condition_notes, priority, or collection_distance) drawn from
   the supplied data. A reason that only cites utility/fairness numbers is
   invalid.
+- The qualitative factor(s) you cite MUST belong to a user who is actually
+  a participant in the candidate cycle you are recommending. Do not cite
+  another user's urgency, condition notes, priority, or distance to justify
+  a cycle they are not part of.
 - You may propose ONE small, clearly-labeled trade adjustment ONLY if it
   involves items/users already present in the supplied data (e.g.
   suggesting the cycle proceed but flagging a condition mismatch the users
@@ -69,7 +73,19 @@ confidence must be between 0.0 and 1.0.
 """
 
 
-def validate_result(result, candidate_count, known_users, known_items):
+def _users_mentioned(text, known_users):
+    """Return the subset of known_users whose name appears in text."""
+
+    text_lower = text.lower()
+
+    return {
+        user
+        for user in known_users
+        if user.lower() in text_lower
+    }
+
+
+def validate_result(result, candidates, known_users, known_items):
 
     if not isinstance(result, dict):
         raise ValueError(
@@ -92,6 +108,8 @@ def validate_result(result, candidate_count, known_users, known_items):
             "AI evaluator response is missing fields: "
             f"{sorted(missing)}"
         )
+
+    candidate_count = len(candidates)
 
     candidate_id = result["recommended_candidate"]
 
@@ -142,6 +160,44 @@ def validate_result(result, candidate_count, known_users, known_items):
             "AI evaluator's reason cites only utility/fairness scores. "
             "Reason must reference a qualitative factor "
             "(urgency, condition, priority, or distance)."
+        )
+
+    # --------------------------------------------------------------
+    # BOUNDARY CHECK: the qualitative factors cited must belong to a
+    # participant of the RECOMMENDED cycle, not some other candidate's
+    # cycle. Citing e.g. "Fiona's stolen bike" to justify a cycle that
+    # does not contain Fiona is a mismatched, unsupported justification
+    # even though it looks like valid qualitative reasoning.
+    # --------------------------------------------------------------
+    cycle_members = set(candidates[candidate_id - 1].get("cycle", []))
+
+    combined_reasoning_text = " ".join([
+        result["reason"],
+        *[str(factor) for factor in result["qualitative_factors_considered"]],
+    ])
+
+    mentioned_users = _users_mentioned(
+        combined_reasoning_text,
+        known_users,
+    )
+
+    users_outside_cycle = mentioned_users - cycle_members
+
+    if users_outside_cycle:
+        raise ValueError(
+            "AI evaluator cited qualitative factors belonging to "
+            f"{sorted(users_outside_cycle)}, who are not participants "
+            f"in recommended candidate {candidate_id} "
+            f"({sorted(cycle_members)}). Reasoning must be grounded in "
+            "the recommended cycle's own participants."
+        )
+
+    if not (mentioned_users & cycle_members):
+        raise ValueError(
+            "AI evaluator's reasoning does not name any participant "
+            f"of recommended candidate {candidate_id} "
+            f"({sorted(cycle_members)}). Reason must cite a qualitative "
+            "factor belonging to someone actually in that cycle."
         )
 
     # --------------------------------------------------------------
@@ -229,7 +285,9 @@ def evaluate_candidates(
         "note": (
             "total_utility and egalitarian_score below are already "
             "final, BGCC-decided values. Use qualitative_context to "
-            "choose among candidates, not these numbers."
+            "choose among candidates, not these numbers. Any "
+            "qualitative factor you cite must belong to a participant "
+            "of the candidate you actually recommend."
         ),
     }
 
@@ -274,7 +332,7 @@ def evaluate_candidates(
 
     return validate_result(
         result,
-        len(candidates),
+        candidates,
         known_users,
         known_items,
     )
