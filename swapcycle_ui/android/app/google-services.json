@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "598228048901",
+    "project_id": "swapcycle",
+    "storage_bucket": "swapcycle.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:598228048901:android:1b1dcf0cab541e75d0106c",
+        "android_client_info": {
+          "package_name": "com.example.swapcycle_ui"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDR6s-Q2t-097DxXFhVnTSyHgGCWRun4io"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
