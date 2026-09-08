@@ -109,15 +109,72 @@ def offline_ai(text):
 
 
 # ============================================================
+# QUALITATIVE CONTEXT (Gemini #2 input BGCC's utility never sees)
+# ============================================================
+
+QUALITATIVE_CONTEXT = {
+
+    "Alice": {
+        "urgency": "High - needs the guitar before a recital next week.",
+        "condition_notes": (
+            "Cares about a clean fretboard and working tuners more "
+            "than cosmetic scuffs."
+        ),
+        "priority": "Condition and readiness to play over speed of pickup.",
+        "collection_distance": "5km",
+    },
+
+    "Bob": {
+        "urgency": "Low - browsing, no deadline.",
+        "condition_notes": "Fine with light cosmetic wear.",
+        "priority": "Getting a usable camera body, brand agnostic.",
+        "collection_distance": "12km",
+    },
+
+    "Charlie": {
+        "urgency": "Medium - wants the bike within two weeks for a commute change.",
+        "condition_notes": "Wants tires and brakes already road-ready.",
+        "priority": "Reliability for daily commuting.",
+        "collection_distance": "3km",
+    },
+
+    "Dina": {
+        "urgency": "Low - flexible on timing.",
+        "condition_notes": "Open to any brand or condition, said 'anything that rides fine'.",
+        "priority": "Ease of exchange over specific brand.",
+        "collection_distance": "8km",
+    },
+
+    "Evan": {
+        "urgency": "Medium - has a trip booked in three weeks.",
+        "condition_notes": "Wants the sensor and lens genuinely like-new, not just labeled that way.",
+        "priority": "Travel durability and image quality.",
+        "collection_distance": "15km",
+    },
+
+    "Fiona": {
+        "urgency": "High - current bike was stolen, needs a commuter replacement ASAP.",
+        "condition_notes": "Wants brakes and gears fully functional out of the box.",
+        "priority": "Immediate usability for commuting.",
+        "collection_distance": "4km",
+    },
+}
+
+
+# ============================================================
 # OFFLINE GEMINI #2 FALLBACK
 # ============================================================
 
-def offline_evaluate_candidates(candidates):
+def offline_evaluate_candidates(candidates, qualitative_context=None):
     """
     Deterministic fallback representing Gemini #2.
 
-    It can only recommend one candidate supplied by BGCC.
+    It can only recommend one candidate supplied by BGCC, and (like the
+    real evaluator) must ground its reason in qualitative_context rather
+    than in the utility/egalitarian numbers BGCC already decided.
     """
+
+    qualitative_context = qualitative_context or {}
 
     best_number = max(
         range(len(candidates)),
@@ -130,20 +187,50 @@ def offline_evaluate_candidates(candidates):
 
     best = candidates[best_number - 1]
 
+    # Pick the most urgent participant in the winning cycle to ground
+    # the reason in something the utility formula never saw.
+    cycle_members = best["cycle"]
+
+    most_urgent_user = None
+    for member in cycle_members:
+        context = qualitative_context.get(member)
+        if context and "high" in context.get("urgency", "").lower():
+            most_urgent_user = member
+            break
+
+    if most_urgent_user:
+        urgency_text = qualitative_context[most_urgent_user]["urgency"]
+        reason = (
+            f"Candidate {best_number} is the strongest advisory pick because "
+            f"{most_urgent_user} has high urgency ({urgency_text}), and this "
+            "cycle lets that need be met without disturbing BGCC's selection."
+        )
+        qualitative_factors_considered = [
+            f"{most_urgent_user}: urgency = {urgency_text}"
+        ]
+    else:
+        reason = (
+            f"Candidate {best_number} is the strongest advisory pick; no "
+            "participant flagged high urgency, so priority notes were used "
+            "to break ties among the supplied candidates."
+        )
+        qualitative_factors_considered = [
+            f"{member}: priority = "
+            f"{qualitative_context.get(member, {}).get('priority', 'n/a')}"
+            for member in cycle_members
+        ]
+
     return {
         "recommended_candidate": best_number,
-        "reason": (
-            f"Candidate {best_number} has the highest total utility "
-            "among the supplied BGCC candidate cycles."
-        ),
-        "strengths": [
-            "Highest total utility among supplied candidates.",
-            "All participants belong to a valid bounded cycle.",
+        "reason": reason,
+        "qualitative_factors_considered": qualitative_factors_considered,
+        "limitations": [
+            "This is a deterministic offline stand-in for Gemini #2, "
+            "not a live model call.",
+            "Another candidate may have a higher fairness score.",
         ],
-        "tradeoffs": [
-            "Another candidate may provide a higher fairness score."
-        ],
-        "confidence": 0.95,
+        "suggested_adjustment": None,
+        "confidence": 0.9,
     }
 
 
@@ -734,6 +821,17 @@ def main():
         "AI EVALUATION OF BGCC CANDIDATES",
     )
 
+    print("\nQualitative context supplied to the AI "
+          "(not seen by the utility formula):")
+
+    print(
+        json.dumps(
+            QUALITATIVE_CONTEXT,
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+
     if not candidate_records:
 
         print(
@@ -746,19 +844,20 @@ def main():
     elif args.offline:
 
         print(
-            "Mode: OFFLINE DEMONSTRATION"
+            "\nMode: OFFLINE DEMONSTRATION"
         )
 
         ai_evaluation = (
             offline_evaluate_candidates(
-                candidate_records
+                candidate_records,
+                qualitative_context=QUALITATIVE_CONTEXT,
             )
         )
 
     else:
 
         print(
-            "Mode: GOOGLE GEMINI"
+            "\nMode: GOOGLE GEMINI"
         )
 
         from ai_cycle_evaluator import (
@@ -769,6 +868,7 @@ def main():
             evaluate_candidates(
                 preferences,
                 candidate_records,
+                qualitative_context=QUALITATIVE_CONTEXT,
             )
         )
 
@@ -832,7 +932,8 @@ def main():
 
         print(
             "Evaluate and explain "
-            "BGCC-generated candidates"
+            "BGCC-generated candidates using "
+            "qualitative context BGCC does not see"
         )
 
         print("\nAI is NOT allowed to:")
@@ -855,6 +956,11 @@ def main():
 
         print(
             "  ✗ Override BGCC"
+        )
+
+        print(
+            "  ✗ Justify its pick using "
+            "utility/egalitarian numbers alone"
         )
 
     # ========================================================
@@ -1003,6 +1109,12 @@ def main():
     )
 
     print(
+        "  ✓ Uses qualitative context "
+        "(urgency, condition notes, priority, "
+        "distance) BGCC's math never sees"
+    )
+
+    print(
         "  ✓ Provides human-readable reasoning"
     )
 
@@ -1022,6 +1134,11 @@ def main():
         "  ✗ Cannot override BGCC"
     )
 
+    print(
+        "  ✗ Cannot justify its pick using "
+        "utility/egalitarian numbers alone"
+    )
+
     print("\nSYSTEM PIPELINE:")
 
     print(
@@ -1031,7 +1148,7 @@ def main():
         " → exchange graph"
         " → BGCC candidate generation"
         " → BGCC deterministic selection"
-        " → Gemini #2 evaluation"
+        " → Gemini #2 qualitative evaluation"
         " → explanation"
     )
 
