@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
@@ -191,7 +192,9 @@ class _PreferenceInputScreenState extends State<PreferenceInputScreen> {
       // Schema deliberately mirrors the input `normalize_preference()`
       // expects on the Python side, plus a status flag so a future
       // Cloud Function trigger knows which docs still need processing.
+      final uid = FirebaseAuth.instance.currentUser!.uid;
       await FirebaseFirestore.instance.collection('preferences').add({
+        'userId': uid, // required by firestore.rules: create check compares this to auth.uid
         'rawText': text,
         'submittedAt': FieldValue.serverTimestamp(),
         'status': 'pending', // pending -> processed once AI bridge exists
