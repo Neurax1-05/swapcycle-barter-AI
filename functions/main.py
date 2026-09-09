@@ -603,6 +603,8 @@ class MatchResultScreen extends StatelessWidget {
               );
             },
           );
-        });
+        },
+      ),
+    );
   }
 }
