@@ -1,0 +1,36 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isQiuUser() {
+      return request.auth != null
+        && request.auth.token.email.matches('.*@qiu[.]edu[.]my$')
+        && request.auth.token.email_verified == true;
+    }
+
+    match /listings/{listingId} {
+      allow read: if isQiuUser();
+      allow create, update: if isQiuUser() && request.resource.data.owner == request.auth.uid;
+      allow delete: if isQiuUser() && resource.data.owner == request.auth.uid;
+    }
+
+    match /preferences/{prefId} {
+      allow read: if isQiuUser() && resource.data.userId == request.auth.uid;
+      allow create: if isQiuUser() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if false; // preferences are append-only from the client
+    }
+
+    // Matches must be written by the trusted backend only (see
+    // firestore_schema.md's security note) — never by a client directly.
+    match /matches/{matchId} {
+      allow read: if isQiuUser();
+      allow write: if false;
+    }
+
+    match /users/{userId} {
+      allow read: if isQiuUser();
+      allow write: if isQiuUser() && userId == request.auth.uid;
+    }
+  }
+}
