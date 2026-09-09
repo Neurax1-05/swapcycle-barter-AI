@@ -89,6 +89,13 @@ class ListingFeedScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('SwapCycle'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Sign out',
+            onPressed: () => FirebaseAuth.instance.signOut(),
+          ),
+        ],
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: listingsRef.snapshots(),
