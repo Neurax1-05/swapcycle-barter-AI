@@ -23,14 +23,21 @@ class SwapCycleApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'SwapCycle',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.teal,
+        ),
         useMaterial3: true,
       ),
       home: const AuthGate(),
     );
   }
 }
+
+// ============================================================
+// LISTING MODEL
+// ============================================================
 
 class Listing {
   final String id;
@@ -65,7 +72,6 @@ class Listing {
   }
 }
 
-
 // ============================================================
 // MAIN MENU
 // ============================================================
@@ -80,6 +86,7 @@ class ListingFeedScreen extends StatelessWidget {
         title: const Text('SwapCycle'),
         centerTitle: true,
         actions: [
+          // MY MATCHES
           IconButton(
             icon: const Icon(Icons.sync_alt),
             tooltip: 'My Matches',
@@ -87,29 +94,33 @@ class ListingFeedScreen extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => const MatchResultScreen(),
+                  builder: (context) =>
+                      const MatchResultScreen(),
                 ),
               );
             },
           ),
+
+          // LOGOUT
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Sign out',
-            onPressed: () => FirebaseAuth.instance.signOut(),
+            onPressed: () {
+              FirebaseAuth.instance.signOut();
+            },
           ),
         ],
       ),
 
       body: Center(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Icon(
                 Icons.swap_horiz,
-                size: 80,
+                size: 90,
               ),
 
               const SizedBox(height: 20),
@@ -137,16 +148,22 @@ class ListingFeedScreen extends StatelessWidget {
               const SizedBox(height: 40),
 
               // ==================================================
-              // I WANT BUTTON
+              // I WANT SOMETHING
               // ==================================================
 
               SizedBox(
-                height: 60,
+                height: 65,
                 child: ElevatedButton.icon(
-                  icon: const Icon(Icons.search),
+                  icon: const Icon(
+                    Icons.search,
+                    size: 28,
+                  ),
                   label: const Text(
                     'I Want Something',
-                    style: TextStyle(fontSize: 18),
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   onPressed: () {
                     Navigator.push(
@@ -163,16 +180,22 @@ class ListingFeedScreen extends StatelessWidget {
               const SizedBox(height: 16),
 
               // ==================================================
-              // MAKE LISTING BUTTON
+              // MAKE A LISTING
               // ==================================================
 
               SizedBox(
-                height: 60,
+                height: 65,
                 child: ElevatedButton.icon(
-                  icon: const Icon(Icons.add_box_outlined),
+                  icon: const Icon(
+                    Icons.add_box_outlined,
+                    size: 28,
+                  ),
                   label: const Text(
                     'Make a Listing',
-                    style: TextStyle(fontSize: 18),
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   onPressed: () {
                     Navigator.push(
@@ -193,9 +216,8 @@ class ListingFeedScreen extends StatelessWidget {
   }
 }
 
-
 // ============================================================
-// PREFERENCE / I WANT PAGE
+// I WANT / PREFERENCE PAGE
 // ============================================================
 
 class PreferenceInputScreen extends StatefulWidget {
@@ -232,14 +254,20 @@ class _PreferenceInputScreenState
     });
 
     try {
-      final uid = FirebaseAuth.instance.currentUser!.uid;
+      final user =
+          FirebaseAuth.instance.currentUser;
+
+      if (user == null) {
+        throw Exception('You are not logged in.');
+      }
 
       await FirebaseFirestore.instance
           .collection('preferences')
           .add({
-        'userId': uid,
+        'userId': user.uid,
         'rawText': text,
-        'submittedAt': FieldValue.serverTimestamp(),
+        'submittedAt':
+            FieldValue.serverTimestamp(),
         'status': 'pending',
       });
 
@@ -252,9 +280,11 @@ class _PreferenceInputScreenState
         _error = 'Failed to submit: $e';
       });
     } finally {
-      setState(() {
-        _submitting = false;
-      });
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+        });
+      }
     }
   }
 
@@ -262,24 +292,30 @@ class _PreferenceInputScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('What are you looking for?'),
+        title: const Text(
+          'What are you looking for?',
+        ),
       ),
+
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment:
+              CrossAxisAlignment.stretch,
           children: [
             const Text(
               'Describe what you want in your own words. '
               'This gets normalized by SwapCycle\'s AI before matching.',
-              style: TextStyle(color: Colors.grey),
+              style: TextStyle(
+                color: Colors.grey,
+              ),
             ),
 
             const SizedBox(height: 16),
 
             TextField(
               controller: _controller,
-              maxLines: 3,
+              maxLines: 4,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 hintText:
@@ -291,8 +327,9 @@ class _PreferenceInputScreenState
             const SizedBox(height: 12),
 
             ElevatedButton(
-              onPressed:
-                  _submitting ? null : _submitPreference,
+              onPressed: _submitting
+                  ? null
+                  : _submitPreference,
               child: _submitting
                   ? const SizedBox(
                       height: 18,
@@ -301,14 +338,19 @@ class _PreferenceInputScreenState
                         strokeWidth: 2,
                       ),
                     )
-                  : const Text('Submit Preference'),
+                  : const Text(
+                      'Submit Preference',
+                    ),
             ),
 
             if (_error != null) ...[
               const SizedBox(height: 12),
+
               Text(
                 _error!,
-                style: const TextStyle(color: Colors.red),
+                style: const TextStyle(
+                  color: Colors.red,
+                ),
               ),
             ],
 
@@ -316,7 +358,7 @@ class _PreferenceInputScreenState
               const SizedBox(height: 24),
 
               const Text(
-                'Saved to Firestore (preferences collection):',
+                'Preference saved:',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                 ),
@@ -330,7 +372,9 @@ class _PreferenceInputScreenState
                     .surfaceContainerHighest,
                 child: Padding(
                   padding: const EdgeInsets.all(12),
-                  child: Text(_submittedText!),
+                  child: Text(
+                    _submittedText!,
+                  ),
                 ),
               ),
             ],
@@ -341,9 +385,8 @@ class _PreferenceInputScreenState
   }
 }
 
-
 // ============================================================
-// MAKE LISTING PAGE
+// MAKE A LISTING PAGE
 // ============================================================
 
 class AddListingScreen extends StatefulWidget {
@@ -356,10 +399,14 @@ class AddListingScreen extends StatefulWidget {
 
 class _AddListingScreenState
     extends State<AddListingScreen> {
-  final _formKey = GlobalKey<FormState>();
+  final _formKey =
+      GlobalKey<FormState>();
 
-  final _itemController = TextEditingController();
-  final _brandController = TextEditingController();
+  final _itemController =
+      TextEditingController();
+
+  final _brandController =
+      TextEditingController();
 
   String _category = 'guitar';
   String _condition = 'good';
@@ -394,26 +441,37 @@ class _AddListingScreenState
   }
 
   Future<void> _submitListing() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
 
     setState(() {
       _submitting = true;
       _error = null;
+      _submitted = false;
     });
 
     try {
-      final uid = FirebaseAuth.instance.currentUser!.uid;
+      final user =
+          FirebaseAuth.instance.currentUser;
+
+      if (user == null) {
+        throw Exception(
+          'You are not logged in.',
+        );
+      }
 
       await FirebaseFirestore.instance
           .collection('listings')
           .add({
-        'ownerId': uid,
+        'ownerId': user.uid,
         'item': _itemController.text.trim(),
         'category': _category,
         'brand': _brandController.text.trim(),
         'condition': _condition,
         'status': 'active',
-        'createdAt': FieldValue.serverTimestamp(),
+        'createdAt':
+            FieldValue.serverTimestamp(),
       });
 
       setState(() {
@@ -423,12 +481,15 @@ class _AddListingScreenState
       });
     } catch (e) {
       setState(() {
-        _error = 'Failed to add listing: $e';
+        _error =
+            'Failed to add listing: $e';
       });
     } finally {
-      setState(() {
-        _submitting = false;
-      });
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+        });
+      }
     }
   }
 
@@ -436,36 +497,45 @@ class _AddListingScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Make a Listing'),
+        title: const Text(
+          'Make a Listing',
+        ),
       ),
 
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
-
           child: ListView(
             children: [
               const Text(
                 'List something you own that you\'d be willing to swap.',
-                style: TextStyle(color: Colors.grey),
+                style: TextStyle(
+                  color: Colors.grey,
+                ),
               ),
 
               const SizedBox(height: 16),
 
-              // ITEM NAME
+              // ITEM
               TextFormField(
                 controller: _itemController,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
+                decoration:
+                    const InputDecoration(
+                  border:
+                      OutlineInputBorder(),
                   labelText: 'Item name',
-                  hintText: 'e.g. Acoustic Guitar',
+                  hintText:
+                      'e.g. Acoustic Guitar',
                 ),
-                validator: (value) =>
-                    (value == null ||
-                            value.trim().isEmpty)
-                        ? 'Required'
-                        : null,
+                validator: (value) {
+                  if (value == null ||
+                      value.trim().isEmpty) {
+                    return 'Required';
+                  }
+
+                  return null;
+                },
               ),
 
               const SizedBox(height: 12),
@@ -473,21 +543,26 @@ class _AddListingScreenState
               // CATEGORY
               DropdownButtonFormField<String>(
                 initialValue: _category,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
+                decoration:
+                    const InputDecoration(
+                  border:
+                      OutlineInputBorder(),
                   labelText: 'Category',
                 ),
                 items: _categories
                     .map(
-                      (c) => DropdownMenuItem(
-                        value: c,
-                        child: Text(c),
+                      (category) =>
+                          DropdownMenuItem(
+                        value: category,
+                        child: Text(category),
                       ),
                     )
                     .toList(),
                 onChanged: (value) {
+                  if (value == null) return;
+
                   setState(() {
-                    _category = value!;
+                    _category = value;
                   });
                 },
               ),
@@ -496,17 +571,24 @@ class _AddListingScreenState
 
               // BRAND
               TextFormField(
-                controller: _brandController,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
+                controller:
+                    _brandController,
+                decoration:
+                    const InputDecoration(
+                  border:
+                      OutlineInputBorder(),
                   labelText: 'Brand',
-                  hintText: 'e.g. Yamaha',
+                  hintText:
+                      'e.g. Yamaha',
                 ),
-                validator: (value) =>
-                    (value == null ||
-                            value.trim().isEmpty)
-                        ? 'Required'
-                        : null,
+                validator: (value) {
+                  if (value == null ||
+                      value.trim().isEmpty) {
+                    return 'Required';
+                  }
+
+                  return null;
+                },
               ),
 
               const SizedBox(height: 12),
@@ -514,21 +596,26 @@ class _AddListingScreenState
               // CONDITION
               DropdownButtonFormField<String>(
                 initialValue: _condition,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
+                decoration:
+                    const InputDecoration(
+                  border:
+                      OutlineInputBorder(),
                   labelText: 'Condition',
                 ),
                 items: _conditions
                     .map(
-                      (c) => DropdownMenuItem(
-                        value: c,
-                        child: Text(c),
+                      (condition) =>
+                          DropdownMenuItem(
+                        value: condition,
+                        child: Text(condition),
                       ),
                     )
                     .toList(),
                 onChanged: (value) {
+                  if (value == null) return;
+
                   setState(() {
-                    _condition = value!;
+                    _condition = value;
                   });
                 },
               ),
@@ -537,24 +624,30 @@ class _AddListingScreenState
 
               // SUBMIT
               ElevatedButton(
-                onPressed:
-                    _submitting ? null : _submitListing,
+                onPressed: _submitting
+                    ? null
+                    : _submitListing,
                 child: _submitting
                     ? const SizedBox(
                         height: 18,
                         width: 18,
-                        child: CircularProgressIndicator(
+                        child:
+                            CircularProgressIndicator(
                           strokeWidth: 2,
                         ),
                       )
-                    : const Text('Add Listing'),
+                    : const Text(
+                        'Add Listing',
+                      ),
               ),
 
               if (_error != null) ...[
                 const SizedBox(height: 12),
+
                 Text(
                   _error!,
-                  style: const TextStyle(
+                  style:
+                      const TextStyle(
                     color: Colors.red,
                   ),
                 ),
@@ -562,10 +655,13 @@ class _AddListingScreenState
 
               if (_submitted) ...[
                 const SizedBox(height: 12),
+
                 const Text(
-                  'Listing added! It\'s now active and visible in the feed.',
+                  'Listing added successfully!',
                   style: TextStyle(
                     color: Colors.green,
+                    fontWeight:
+                        FontWeight.bold,
                   ),
                 ),
               ],
@@ -577,7 +673,6 @@ class _AddListingScreenState
   }
 }
 
-
 // ============================================================
 // MATCH RESULTS
 // ============================================================
@@ -588,27 +683,43 @@ class MatchResultScreen extends StatelessWidget {
   Future<Listing?> _fetchListing(
     String listingId,
   ) async {
-    final doc = await FirebaseFirestore.instance
+    final doc = await FirebaseFirestore
+        .instance
         .collection('listings')
         .doc(listingId)
         .get();
 
-    if (!doc.exists) return null;
+    if (!doc.exists) {
+      return null;
+    }
 
     return Listing.fromFirestore(doc);
   }
 
   @override
   Widget build(BuildContext context) {
-    final uid =
-        FirebaseAuth.instance.currentUser!.uid;
+    final user =
+        FirebaseAuth.instance.currentUser;
 
-    final matchesRef = FirebaseFirestore.instance
-        .collection('matches')
-        .where(
-          'cycle',
-          arrayContains: uid,
-        );
+    if (user == null) {
+      return const Scaffold(
+        body: Center(
+          child: Text(
+            'You are not logged in.',
+          ),
+        ),
+      );
+    }
+
+    final uid = user.uid;
+
+    final matchesRef =
+        FirebaseFirestore.instance
+            .collection('matches')
+            .where(
+              'cycle',
+              arrayContains: uid,
+            );
 
     return Scaffold(
       appBar: AppBar(
@@ -616,120 +727,169 @@ class MatchResultScreen extends StatelessWidget {
       ),
 
       body: StreamBuilder<
-          QuerySnapshot<Map<String, dynamic>>>(
+          QuerySnapshot<
+              Map<String, dynamic>>>(
         stream: matchesRef.snapshots(),
 
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Center(
-              child: Text(
-                'Error loading matches: ${snapshot.error}',
+              child: Padding(
+                padding:
+                    const EdgeInsets.all(24),
+                child: Text(
+                  'Error loading matches: '
+                  '${snapshot.error}',
+                ),
               ),
             );
           }
 
           if (!snapshot.hasData) {
             return const Center(
-              child: CircularProgressIndicator(),
+              child:
+                  CircularProgressIndicator(),
             );
           }
 
-          final docs = snapshot.data!.docs;
+          final docs =
+              snapshot.data!.docs;
 
           if (docs.isEmpty) {
             return const Center(
               child: Padding(
-                padding: EdgeInsets.all(24),
+                padding:
+                    EdgeInsets.all(24),
                 child: Text(
-                  'No matches yet. Submit a preference and check back '
+                  'No matches yet.\n\n'
+                  'Submit a preference and check back '
                   'after the next matching run.',
-                  textAlign: TextAlign.center,
+                  textAlign:
+                      TextAlign.center,
                 ),
               ),
             );
           }
 
           return ListView.builder(
-            padding: const EdgeInsets.all(12),
+            padding:
+                const EdgeInsets.all(12),
             itemCount: docs.length,
 
-            itemBuilder: (context, index) {
-              final data = docs[index].data();
+            itemBuilder:
+                (context, index) {
+              final data =
+                  docs[index].data();
 
-              final cycle = List<String>.from(
-                data['cycle'] as List? ?? [],
+              final cycle =
+                  List<String>.from(
+                data['cycle']
+                        as List? ??
+                    [],
               );
 
-              final listingIds = List<String>.from(
-                data['listingIds'] as List? ?? [],
+              final listingIds =
+                  List<String>.from(
+                data['listingIds']
+                        as List? ??
+                    [],
               );
 
               final utility =
-                  (data['totalUtility'] as num?)
+                  (data['totalUtility']
+                          as num?)
                       ?.toDouble();
 
               final fairness =
-                  (data['egalitarianScore'] as num?)
+                  (data['egalitarianScore']
+                          as num?)
                       ?.toDouble();
 
               final status =
-                  data['status'] as String? ?? 'pending';
+                  data['status']
+                          as String? ??
+                      'pending';
 
               return Card(
-                margin: const EdgeInsets.symmetric(
+                margin:
+                    const EdgeInsets.symmetric(
                   vertical: 8,
                 ),
 
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding:
+                      const EdgeInsets.all(16),
 
                   child: Column(
                     crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                        CrossAxisAlignment
+                            .start,
 
                     children: [
                       Row(
                         children: [
                           const Icon(
                             Icons.sync_alt,
-                            color: Colors.teal,
+                            color:
+                                Colors.teal,
                           ),
 
-                          const SizedBox(width: 8),
+                          const SizedBox(
+                            width: 8,
+                          ),
 
                           Text(
-                            'Exchange cycle (${cycle.length}-way)',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
+                            'Exchange cycle '
+                            '(${cycle.length}-way)',
+                            style:
+                                const TextStyle(
+                              fontWeight:
+                                  FontWeight
+                                      .bold,
                             ),
                           ),
 
                           const Spacer(),
 
                           Chip(
-                            label: Text(status),
+                            label:
+                                Text(status),
                           ),
                         ],
                       ),
 
-                      const SizedBox(height: 8),
-
-                      Text(
-                        'Participants: '
-                        '${cycle.join(' → ')} → ${cycle.first}',
+                      const SizedBox(
+                        height: 8,
                       ),
 
-                      const SizedBox(height: 8),
+                      if (cycle.isNotEmpty)
+                        Text(
+                          'Participants: '
+                          '${cycle.join(' → ')} '
+                          '→ ${cycle.first}',
+                        ),
+
+                      const SizedBox(
+                        height: 8,
+                      ),
 
                       ...listingIds.map(
-                        (id) => FutureBuilder<Listing?>(
-                          future: _fetchListing(id),
+                        (id) =>
+                            FutureBuilder<
+                                Listing?>(
+                          future:
+                              _fetchListing(
+                            id,
+                          ),
 
-                          builder: (context, snap) {
-                            if (!snap.hasData) {
+                          builder:
+                              (context, snap) {
+                            if (!snap
+                                .hasData) {
                               return const Padding(
                                 padding:
-                                    EdgeInsets.symmetric(
+                                    EdgeInsets
+                                        .symmetric(
                                   vertical: 4,
                                 ),
                                 child:
@@ -737,15 +897,19 @@ class MatchResultScreen extends StatelessWidget {
                               );
                             }
 
-                            final listing = snap.data;
+                            final listing =
+                                snap.data;
 
-                            if (listing == null) {
-                              return const SizedBox.shrink();
+                            if (listing ==
+                                null) {
+                              return const SizedBox
+                                  .shrink();
                             }
 
                             return Padding(
                               padding:
-                                  const EdgeInsets.symmetric(
+                                  const EdgeInsets
+                                      .symmetric(
                                 vertical: 2,
                               ),
                               child: Text(
@@ -758,7 +922,9 @@ class MatchResultScreen extends StatelessWidget {
                         ),
                       ),
 
-                      const SizedBox(height: 8),
+                      const SizedBox(
+                        height: 8,
+                      ),
 
                       if (utility != null)
                         Text(
