@@ -54,7 +54,7 @@ class Listing {
     final data = doc.data()!;
     return Listing(
       id: doc.id,
-      owner: data['owner'] as String? ?? '',
+      owner: data['ownerId'] as String? ?? '',
       item: data['item'] as String? ?? '',
       category: data['category'] as String? ?? '',
       brand: data['brand'] as String? ?? '',
