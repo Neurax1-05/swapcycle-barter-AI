@@ -4,7 +4,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'auth_gate.dart';
+import 'available_items_screen.dart';
 import 'firebase_options.dart';
+import 'profile_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -86,6 +88,20 @@ class ListingFeedScreen extends StatelessWidget {
         title: const Text('SwapCycle'),
         centerTitle: true,
         actions: [
+          // MY PROFILE
+          IconButton(
+            icon: const Icon(Icons.person),
+            tooltip: 'My Profile',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ProfileScreen(),
+                ),
+              );
+            },
+          ),
+
           // MY MATCHES
           IconButton(
             icon: const Icon(Icons.sync_alt),
@@ -203,6 +219,38 @@ class ListingFeedScreen extends StatelessWidget {
                       MaterialPageRoute(
                         builder: (context) =>
                             const AddListingScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // ==================================================
+              // BROWSE AVAILABLE ITEMS
+              // ==================================================
+
+              SizedBox(
+                height: 65,
+                child: ElevatedButton.icon(
+                  icon: const Icon(
+                    Icons.grid_view,
+                    size: 28,
+                  ),
+                  label: const Text(
+                    'Browse Available Items',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            const AvailableItemsScreen(),
                       ),
                     );
                   },

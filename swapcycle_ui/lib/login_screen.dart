@@ -2,6 +2,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import 'users_service.dart';
+
 const String kAllowedDomain = 'qiu.edu.my';
 
 class LoginScreen extends StatefulWidget {
@@ -55,6 +57,13 @@ class _LoginScreenState extends State<LoginScreen> {
       await FirebaseAuth.instance.signInWithCredential(credential);
       // If the blocking function rejects this user server-side, this
       // throws here with a FirebaseAuthException from the function.
+
+      // Sync (or create, on first login) the Firestore `users/{uid}` doc
+      // from the Google profile — this is the only "sign-up" step there is.
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await UsersService.upsertFromAuth(user);
+      }
     } on FirebaseAuthException catch (e) {
       setState(() => _error = e.message ?? 'Sign-in failed.');
     } catch (e) {

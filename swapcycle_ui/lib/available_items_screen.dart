@@ -1,0 +1,73 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+
+import 'main.dart'; // Listing model
+import 'users_service.dart';
+
+class AvailableItemsScreen extends StatelessWidget {
+  const AvailableItemsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
+    final listingsRef = FirebaseFirestore.instance
+        .collection('listings')
+        .where('status', isEqualTo: 'active')
+        .snapshots();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Available Items')),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: listingsRef,
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final docs = snapshot.data!.docs
+              .where((d) => (d.data()['ownerId'] as String?) != uid)
+              .toList(); // hide your own listings
+
+          if (docs.isEmpty) {
+            return const Center(child: Text('No items available right now.'));
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(12),
+            itemCount: docs.length,
+            itemBuilder: (context, index) {
+              final listing = Listing.fromFirestore(docs[index]);
+
+              return Card(
+                margin: const EdgeInsets.symmetric(vertical: 6),
+                child: FutureBuilder<UserProfile?>(
+                  future: UsersService.fetch(listing.owner),
+                  builder: (context, snap) {
+                    final photo = snap.data?.photoUrl ?? '';
+                    final name = snap.data?.displayName ?? '...';
+
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundImage:
+                            photo.isNotEmpty ? NetworkImage(photo) : null,
+                        child: photo.isEmpty
+                            ? const Icon(Icons.person)
+                            : null,
+                      ),
+                      title: Text(listing.item),
+                      subtitle: Text(
+                        '${listing.brand} • ${listing.condition} — listed by $name',
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
