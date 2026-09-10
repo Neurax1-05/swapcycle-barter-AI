@@ -1,3 +1,4 @@
+```dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -36,7 +37,9 @@ class AvailableItemsScreen extends StatelessWidget {
           }
 
           if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(
+              child: CircularProgressIndicator(),
+            );
           }
 
           final docs = snapshot.data!.docs
@@ -44,7 +47,9 @@ class AvailableItemsScreen extends StatelessWidget {
               .toList(); // hide your own listings
 
           if (docs.isEmpty) {
-            return const Center(child: Text('No items available right now.'));
+            return const Center(
+              child: Text('No items available right now.'),
+            );
           }
 
           return ListView.builder(
@@ -56,22 +61,28 @@ class AvailableItemsScreen extends StatelessWidget {
               return Card(
                 margin: const EdgeInsets.symmetric(vertical: 6),
                 child: FutureBuilder<UserProfile?>(
-                  future: UsersService.fetch(listing.ownerId),
+                  future: UsersService.fetch(listing.owner),
                   builder: (context, snap) {
                     if (snap.hasError) {
-                      debugPrint('Failed to load owner profile: ${snap.error}');
+                      debugPrint(
+                        'Failed to load owner profile: ${snap.error}',
+                      );
                     }
 
                     final photo = snap.data?.photoUrl ?? '';
-                    final name = snap.data?.displayName ?? 'Unknown user';
+                    final name =
+                        snap.data?.displayName ?? 'Unknown user';
 
                     return ListTile(
                       leading: CircleAvatar(
-                        backgroundImage:
-                            photo.isNotEmpty ? NetworkImage(photo) : null,
+                        backgroundImage: photo.isNotEmpty
+                            ? NetworkImage(photo)
+                            : null,
                         onBackgroundImageError: photo.isNotEmpty
                             ? (exception, stackTrace) {
-                                debugPrint('Failed to load avatar: $exception');
+                                debugPrint(
+                                  'Failed to load avatar: $exception',
+                                );
                               }
                             : null,
                         child: photo.isEmpty
@@ -93,3 +104,4 @@ class AvailableItemsScreen extends StatelessWidget {
     );
   }
 }
+```
