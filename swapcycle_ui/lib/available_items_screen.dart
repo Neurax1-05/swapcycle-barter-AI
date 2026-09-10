@@ -1,9 +1,8 @@
-```dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'main.dart'; // Listing model
+import 'main.dart';
 import 'users_service.dart';
 
 class AvailableItemsScreen extends StatelessWidget {
@@ -19,7 +18,9 @@ class AvailableItemsScreen extends StatelessWidget {
         .snapshots();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Available Items')),
+      appBar: AppBar(
+        title: const Text('Available Items'),
+      ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: listingsRef,
         builder: (context, snapshot) {
@@ -44,7 +45,7 @@ class AvailableItemsScreen extends StatelessWidget {
 
           final docs = snapshot.data!.docs
               .where((d) => (d.data()['ownerId'] as String?) != uid)
-              .toList(); // hide your own listings
+              .toList();
 
           if (docs.isEmpty) {
             return const Center(
@@ -104,4 +105,3 @@ class AvailableItemsScreen extends StatelessWidget {
     );
   }
 }
-```
