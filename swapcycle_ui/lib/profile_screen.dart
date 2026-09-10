@@ -5,13 +5,28 @@ import 'package:flutter/material.dart';
 import 'main.dart'; // Listing model
 import 'users_service.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
 
+class _ProfileScreenState extends State<ProfileScreen> {
+  User? user;
+  Future<UserProfile?>? _profileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      _profileFuture = UsersService.fetch(user!.uid);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     if (user == null) {
       return const Scaffold(body: Center(child: Text('Not logged in.')));
     }
@@ -19,16 +34,29 @@ class ProfileScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('My Profile')),
       body: FutureBuilder<UserProfile?>(
-        future: UsersService.fetch(user.uid),
+        future: _profileFuture,
         builder: (context, snapshot) {
-          if (!snapshot.hasData) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  'ERROR loading profile:\n${snapshot.error}',
+                  style: const TextStyle(color: Colors.red),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
           final profile = snapshot.data;
-          final name = profile?.displayName ?? user.displayName ?? 'Unknown';
-          final email = profile?.email ?? user.email ?? '';
-          final photoUrl = profile?.photoUrl ?? user.photoURL ?? '';
+          final name = profile?.displayName ?? user!.displayName ?? 'Unknown';
+          final email = profile?.email ?? user!.email ?? '';
+          final photoUrl = profile?.photoUrl ?? user!.photoURL ?? '';
 
           return ListView(
             padding: const EdgeInsets.all(20),
@@ -40,6 +68,11 @@ class ProfileScreen extends StatelessWidget {
                       radius: 44,
                       backgroundImage:
                           photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
+                      onBackgroundImageError: photoUrl.isNotEmpty
+                          ? (exception, stackTrace) {
+                              debugPrint('Failed to load avatar: $exception');
+                            }
+                          : null,
                       child: photoUrl.isEmpty
                           ? const Icon(Icons.person, size: 44)
                           : null,
@@ -65,9 +98,19 @@ class ProfileScreen extends StatelessWidget {
               StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: FirebaseFirestore.instance
                     .collection('listings')
-                    .where('ownerId', isEqualTo: user.uid)
+                    .where('ownerId', isEqualTo: user!.uid)
                     .snapshots(),
                 builder: (context, snap) {
+                  if (snap.hasError) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text(
+                        'ERROR loading listings:\n${snap.error}',
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    );
+                  }
+
                   if (!snap.hasData) {
                     return const Padding(
                       padding: EdgeInsets.symmetric(vertical: 12),
