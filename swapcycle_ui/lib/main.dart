@@ -960,6 +960,7 @@ class MatchResultScreen extends StatelessWidget {
                                       .symmetric(
                                 vertical: 2,
                               ),
+
                               child: Text(
                                 '• ${listing.item} '
                                 '(${listing.brand}) — '
