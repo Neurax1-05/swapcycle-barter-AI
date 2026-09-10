@@ -22,6 +22,19 @@ class AvailableItemsScreen extends StatelessWidget {
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: listingsRef,
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text(
+                  'ERROR loading items:\n${snapshot.error}',
+                  style: const TextStyle(color: Colors.red),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
@@ -43,15 +56,24 @@ class AvailableItemsScreen extends StatelessWidget {
               return Card(
                 margin: const EdgeInsets.symmetric(vertical: 6),
                 child: FutureBuilder<UserProfile?>(
-                  future: UsersService.fetch(listing.owner),
+                  future: UsersService.fetch(listing.ownerId),
                   builder: (context, snap) {
+                    if (snap.hasError) {
+                      debugPrint('Failed to load owner profile: ${snap.error}');
+                    }
+
                     final photo = snap.data?.photoUrl ?? '';
-                    final name = snap.data?.displayName ?? '...';
+                    final name = snap.data?.displayName ?? 'Unknown user';
 
                     return ListTile(
                       leading: CircleAvatar(
                         backgroundImage:
                             photo.isNotEmpty ? NetworkImage(photo) : null,
+                        onBackgroundImageError: photo.isNotEmpty
+                            ? (exception, stackTrace) {
+                                debugPrint('Failed to load avatar: $exception');
+                              }
+                            : null,
                         child: photo.isEmpty
                             ? const Icon(Icons.person)
                             : null,
