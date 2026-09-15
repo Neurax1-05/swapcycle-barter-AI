@@ -1,0 +1,38 @@
+[33m09e7ca5[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Refactor AvailableItemsScreen for improved code formatting; enhance readability and remove unnecessary comments
+[33m3730ce8[m Refactor AvailableItemsScreen for improved readability; format widget structure and enhance error handling
+[33m0321627[m Add bullet point formatting for item display in MatchResultScreen
+[33m3af7e66[m Enhance error handling in AvailableItemsScreen; display error messages for item loading and user profile fetching
+[33m21b55a2[m Refactor ProfileScreen to use StatefulWidget; implement user profile fetching and error handling
+[33m8cca501[m Add user profile and available items screens; implement user data synchronization on sign-in
+[33md3e83d1[m Implement domain restriction for user sign-up and sign-in; refactor Flutter UI for improved user experience and functionality
+[33m8299bbe[m Refactor main.py to enhance code readability, improve UI components, and ensure user authentication checks in various screens
+[33m97bc50e[m Refactor main.dart to improve layout and structure, update UI components, and enhance user interaction in ListingFeedScreen and PreferenceInputScreen
+[33m0d2c93f[m Fix layout issue in MatchResultScreen by closing widget structure
+[33m5859341[m Refactor main.py to implement Flutter app structure with Firestore integration and user authentication
+[33m4fa4978[m Update .gitignore to include Firebase service account files and remove obsolete JSON key
+[33ma4c9bc3[m Update owner field mapping in Listing model and add Firestore bridge script for preference processing
+[33m8aa387b[m Add sign-out button to ListingFeedScreen app bar
+[33m17273f4[m Add userId to preferences submission in Firestore
+[33m9a45dff[m Update google-services.json to add OAuth client configurations
+[33ma1ccc81[m Remove unused Kotlin compiler session file
+[33me797b1f[m Update google_sign_in dependency to version 6.2.1 and adjust Flutter SDK version in pubspec.yaml; add Kotlin compiler session file.
+[33mcc3ed79[m Add Firestore rules and indexes configuration
+[33mfee5b23[m Add Firebase Remote Config and Security Rules Auditor Skills
+[33m2ae956d[m chore: add VSCode settings for CMake source directory
+[33m18c7d36[m chore: add package.json with firebase dependencies
+[33m0bea423[m Implement authentication flow with Firebase Auth and Google Sign-In; restrict sign-up to specific domain
+[33meba561d[m Integrate Firestore for dynamic listing management and preference submission
+[33mfa6a7dc[m Integrate Firebase support by adding necessary configurations and dependencies for cloud_firestore and firebase_core
+[33m5ba6910[m Enhance AI evaluator to ensure qualitative factors cited belong to cycle participants
+[33m53aff0a[m Add qualitative context for candidate evaluation in offline AI
+[33mc04980e[m Refactor AI evaluator and Flutter UI for SwapCycle application
+[33m10826e2[m Merge branch 'main' of https://github.com/Neurax1-05/swapcycle-barter-AI
+[33m80df048[m Add Flutter UI scaffold
+[33m4c1580c[m Update project description in README.md
+[33mc1a2ab4[m Revert README to previous version
+[33m1b9836c[m Merge branch 'main' of https://github.com/Neurax1-05/swapcycle-barter-AI
+[33md4cc1ac[m Improve documentation formatting
+[33m75c9b2f[m Revise README with AI setup and usage information
+[33m3095630[m Merge branch 'main' of https://github.com/Neurax1-05/swapcycle-barter-AI
+[33m7b4470c[m Initial commit: SwapCycle FYP1 checkpoint
+[33m0c0a321[m Initial commit

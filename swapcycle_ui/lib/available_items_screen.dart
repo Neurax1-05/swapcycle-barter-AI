@@ -75,6 +75,7 @@ class AvailableItemsScreen extends StatelessWidget {
                         snap.data?.displayName ?? 'Unknown user';
 
                     return ListTile(
+                      isThreeLine: true,
                       leading: CircleAvatar(
                         backgroundImage: photo.isNotEmpty
                             ? NetworkImage(photo)
@@ -92,7 +93,8 @@ class AvailableItemsScreen extends StatelessWidget {
                       ),
                       title: Text(listing.item),
                       subtitle: Text(
-                        '${listing.brand} • ${listing.condition} — listed by $name',
+                        '${listing.brand} • ${listing.condition}\n'
+                        'Listed by $name',
                       ),
                     );
                   },
