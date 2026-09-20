@@ -36,4 +36,5 @@ Copy `.env.example` to `.env` and add your own key:
 - `firestore_schema.md` — database schema
 - `checkpoint_evidence.md` — FYP checkpoint documentation
 
-Doing a small check to test push capabilitys.
+Doing a small check to test push capabilitys. 
+More stuff.
