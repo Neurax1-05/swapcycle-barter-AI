@@ -1,0 +1,46 @@
+# --- Python ---
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*firebase-adminsdk*.json
+serviceAccountKey.json
+
+# --- Node (Firebase functions) ---
+node_modules/
+
+# --- Flutter / Dart (build artifacts — this is almost certainly your 1GB) ---
+**/build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+*.g.dart
+
+# --- Android (Gradle caches, local machine config, keystores) ---
+**/android/.gradle/
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.java
+*.jks
+*.keystore
+key.properties
+
+# --- IDE ---
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
