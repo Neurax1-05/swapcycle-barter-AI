@@ -35,6 +35,3 @@ Copy `.env.example` to `.env` and add your own key:
 - `architecture.md` — system design and component responsibilities
 - `firestore_schema.md` — database schema
 - `checkpoint_evidence.md` — FYP checkpoint documentation
-
-Doing a small check to test push capabilitys. 
-More stuff.
