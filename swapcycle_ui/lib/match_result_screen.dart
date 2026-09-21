@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'chat_screen.dart';
 import 'main.dart' show Listing;
 import 'users_service.dart';
 
@@ -65,6 +66,7 @@ class MatchResultScreen extends StatelessWidget {
             itemCount: docs.length,
             itemBuilder: (context, index) => MatchCard(
               key: ValueKey(docs[index].id),
+              matchId: docs[index].id,
               data: docs[index].data(),
             ),
           );
@@ -88,9 +90,10 @@ class _CycleData {
 }
 
 class MatchCard extends StatefulWidget {
+  final String matchId;
   final Map<String, dynamic> data;
 
-  const MatchCard({super.key, required this.data});
+  const MatchCard({super.key, required this.matchId, required this.data});
 
   @override
   State<MatchCard> createState() => _MatchCardState();
@@ -101,11 +104,13 @@ class _MatchCardState extends State<MatchCard> {
 
   late final List<String> _cycle;
   late final List<String> _listingIds;
+  late final String _myUid;
 
   @override
   void initState() {
     super.initState();
 
+    _myUid = FirebaseAuth.instance.currentUser!.uid;
     _cycle = List<String>.from(widget.data['cycle'] as List? ?? []);
     _listingIds =
         List<String>.from(widget.data['listingIds'] as List? ?? []);
@@ -115,6 +120,18 @@ class _MatchCardState extends State<MatchCard> {
 
   static String _shortId(String id) =>
       id.length <= 6 ? id : '${id.substring(0, 6)}…';
+
+  /// The people I actually swap with: the one before me and the one
+  /// after me in the cycle. In a 2-way swap they are the same person.
+  List<String> get _neighbours {
+    final n = _cycle.length;
+    final i = _cycle.indexOf(_myUid);
+    if (n < 2 || i < 0) return const [];
+    return {_cycle[(i + 1) % n], _cycle[(i - 1 + n) % n]}.toList();
+  }
+
+  DocumentReference<Map<String, dynamic>> get _matchRef =>
+      FirebaseFirestore.instance.collection('matches').doc(widget.matchId);
 
   Future<_CycleData> _load() async {
     final db = FirebaseFirestore.instance;
@@ -142,11 +159,49 @@ class _MatchCardState extends State<MatchCard> {
     return _CycleData(listings, names);
   }
 
+  // Cycle-wide, all-or-nothing: status flips to 'confirmed' only when
+  // every user in the cycle has confirmed.
+  Future<void> _confirm() async {
+    try {
+      await FirebaseFirestore.instance.runTransaction((tx) async {
+        final snap = await tx.get(_matchRef);
+        final data = snap.data()!;
+        final cycle = List<String>.from(data['cycle'] ?? []);
+        final conf = Map<String, dynamic>.from(data['confirmations'] ?? {});
+        conf[_myUid] = true;
+        final everyoneIn = cycle.every((u) => conf[u] == true);
+        tx.update(_matchRef, {
+          'confirmations.$_myUid': true,
+          if (everyoneIn) 'status': 'confirmed',
+        });
+      });
+    } catch (e) {
+      _snack('Could not confirm: $e');
+    }
+  }
+
+  Future<void> _decline() async {
+    try {
+      await _matchRef.update({'status': 'declined'});
+    } catch (e) {
+      _snack('Could not decline: $e');
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final utility = (widget.data['totalUtility'] as num?)?.toDouble();
     final fairness = (widget.data['egalitarianScore'] as num?)?.toDouble();
     final status = widget.data['status'] as String? ?? 'pending';
+    final conf =
+        Map<String, dynamic>.from(widget.data['confirmations'] as Map? ?? {});
+    final confirmedCount = _cycle.where((u) => conf[u] == true).length;
+    final iConfirmed = conf[_myUid] == true;
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
@@ -216,6 +271,32 @@ class _MatchCardState extends State<MatchCard> {
                         ),
                       ),
                     ),
+
+                    const SizedBox(height: 12),
+
+                    // Private chat only with the people I swap with.
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: _neighbours
+                          .map(
+                            (uid) => OutlinedButton.icon(
+                              icon: const Icon(Icons.chat_bubble_outline),
+                              label: Text('Chat with ${nameOf(uid)}'),
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ChatScreen(
+                                    matchId: widget.matchId,
+                                    otherUid: uid,
+                                    otherName: nameOf(uid),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
                   ],
                 );
               },
@@ -228,6 +309,35 @@ class _MatchCardState extends State<MatchCard> {
 
             if (fairness != null)
               Text('Fairness score: ${fairness.toStringAsFixed(2)}'),
+
+            const Divider(height: 24),
+
+            if (status == 'confirmed')
+              const Text(
+                'Everyone confirmed. Arrange your swaps in chat.',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              )
+            else if (status == 'declined')
+              const Text('This trade was declined.')
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '$confirmedCount of ${_cycle.length} confirmed',
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _decline,
+                    child: const Text('Decline'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: iConfirmed ? null : _confirm,
+                    child: Text(iConfirmed ? 'Confirmed' : 'Confirm'),
+                  ),
+                ],
+              ),
           ],
         ),
       ),
