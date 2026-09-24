@@ -3,3 +3,5 @@ pulp>=2.8
 matplotlib>=3.8
 requests>=2.31
 python-dotenv>=1.0
+firebase-admin>=6.5
+pytest>=8.0

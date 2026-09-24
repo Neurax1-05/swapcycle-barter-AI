@@ -16,12 +16,12 @@ def build_exchange_graph(users):
 def cycle_edges(c): return list(zip(c,c[1:]+c[:1]))
 def cycle_weight(G,c): return sum(G[u][v]["weight"] for u,v in cycle_edges(c))
 def egalitarian_score(G,c): return min(G[u][v]["weight"] for u,v in cycle_edges(c))
-def find_cycles(G,max_len=4): return [c for c in nx.simple_cycles(G) if 2<=len(c)<=max_len]
+def find_cycles(G,max_len=4): return [c for c in nx.simple_cycles(G,length_bound=max_len) if 2<=len(c)<=max_len]
 
 def bounded_greedy_cycle_cover(G,max_len=4):
     remaining=set(G.nodes()); matched=[]
     while True:
-        sub=G.subgraph(remaining); candidates=[c for c in nx.simple_cycles(sub) if 2<=len(c)<=max_len]
+        sub=G.subgraph(remaining); candidates=[c for c in nx.simple_cycles(sub,length_bound=max_len) if 2<=len(c)<=max_len]
         if not candidates: break
         best=max(candidates,key=lambda c:cycle_weight(G,c)); matched.append(best); remaining-=set(best)
     return matched,remaining

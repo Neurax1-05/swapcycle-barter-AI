@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 import requests
 from dotenv import load_dotenv
@@ -53,6 +54,11 @@ IMPORTANT RULES:
   involves items/users already present in the supplied data (e.g.
   suggesting the cycle proceed but flagging a condition mismatch the users
   should confirm). Never invent a new item, user, or value.
+- Do NOT mention any user who is NOT a participant of the candidate you
+  recommend, not even to compare ("X needs it more than Y"). Other users'
+  details are private to them and this explanation is shown to the
+  participants of the recommended cycle. Explain the choice using only the
+  recommended cycle's own participants.
 - Your recommendation is ADVISORY. BGCC remains the authoritative
   deterministic matching engine for validity and scoring.
 - Return JSON only.
@@ -76,12 +82,14 @@ confidence must be between 0.0 and 1.0.
 def _users_mentioned(text, known_users):
     """Return the subset of known_users whose name appears in text."""
 
-    text_lower = text.lower()
-
+    # Whole-word match, so a user called "Al" is not "found" inside "Alice".
     return {
         user
         for user in known_users
-        if user.lower() in text_lower
+        if re.search(
+            r"(?<!\w)" + re.escape(user.lower()) + r"(?!\w)",
+            text.lower(),
+        )
     }
 
 

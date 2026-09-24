@@ -16,17 +16,26 @@ from bgcc_prototype import (
     find_cycles,
 )
 
+from cycle_arbitration import (
+    build_context,
+    build_labels,
+    make_ai_arbiter,
+    select_cycles,
+)
+
 
 # ============================================================
 # OPTIONAL AI CYCLE EVALUATOR
 # ============================================================
 
 try:
+    from ai_cycle_evaluator import MODEL as AI_MODEL
     from ai_cycle_evaluator import evaluate_candidates
 
     AI_EVALUATOR_AVAILABLE = True
 
 except Exception:
+    AI_MODEL = ""
     AI_EVALUATOR_AVAILABLE = False
 
 
@@ -198,35 +207,15 @@ def compute_edge_weight(
 
         matched_keyword = False
 
-        listing_words = set(item_text.split())
-
         for keyword in keywords:
 
             keyword = str(
                 keyword
             ).strip().lower()
 
-            if not keyword:
-                continue
-
-            # Exact phrase match, e.g. keyword "mouse" found directly
-            # inside "mouse logitech electronics".
-            if keyword in item_text:
-                matched_keyword = True
-                break
-
-            # Fallback: multi-word keywords (e.g. "graphing calculator")
-            # rarely appear verbatim in a short listing string. Count it
-            # as a match if any individual word of the keyword phrase
-            # (longer than 2 chars, to skip "a"/"of"/etc.) appears as a
-            # whole word in the listing text — so "graphing calculator"
-            # still matches a listing item of "Calculator".
-            keyword_words = [
-                w for w in keyword.split() if len(w) > 2
-            ]
-
-            if keyword_words and any(
-                w in listing_words for w in keyword_words
+            if (
+                keyword
+                and keyword in item_text
             ):
                 matched_keyword = True
                 break
@@ -1131,6 +1120,29 @@ def canonical_cycle(
 
 
 # ============================================================
+# DISPLAY NAMES (the AI needs readable names, not Firestore uids)
+# ============================================================
+
+def fetch_display_names(db, uids):
+    names = {}
+
+    for uid in uids:
+        try:
+            doc = db.collection("users").document(uid).get()
+
+            if doc.exists:
+                names[uid] = (doc.to_dict() or {}).get("displayName", "")
+
+        except Exception as exc:
+            print(
+                f"    WARNING: could not read display name "
+                f"for {uid}: {exc}"
+            )
+
+    return names
+
+
+# ============================================================
 # MATCH ID
 # ============================================================
 
@@ -1171,6 +1183,7 @@ def save_matches(
     db,
     graph,
     cycles,
+    ai_decisions=None,
 ):
 
     print(
@@ -1401,6 +1414,28 @@ def save_matches(
                 firestore.SERVER_TIMESTAMP,
         }
 
+        # ----------------------------------------------------
+        # AI ARBITRATION RESULT (advisory explanation only)
+        # ----------------------------------------------------
+        decision = (ai_decisions or {}).get(frozenset(cycle))
+
+        if decision:
+            match_data["aiEvaluation"] = {
+                "reason": decision.get("reason", ""),
+                "qualitative_factors_considered": decision.get(
+                    "qualitative_factors_considered", []
+                ),
+                "limitations": decision.get("limitations", []),
+                "suggested_adjustment": decision.get(
+                    "suggested_adjustment"
+                ),
+                "confidence": decision.get("confidence"),
+                "alternatives_considered": decision.get(
+                    "alternatives_considered", 0
+                ),
+                "model": AI_MODEL,
+            }
+
         # ====================================================
         # CHECK EXISTING MATCH
         # ====================================================
@@ -1589,6 +1624,15 @@ def main():
     )
 
     parser.add_argument(
+        "--no-ai",
+        action="store_true",
+        help=(
+            "Plain BGCC only: do not use the AI to arbitrate "
+            "between conflicting cycles."
+        ),
+    )
+
+    parser.add_argument(
         "--max-cycle-length",
         type=int,
         default=4,
@@ -1714,48 +1758,53 @@ def main():
         "[6] Running BGCC matching..."
     )
 
-    try:
+    # BGCC picks the best cycle each round. When several candidate
+    # cycles compete for the same user and we know something about the
+    # users involved (urgency, notes), Gemini #2 chooses among BGCC's own
+    # valid candidates; the loser stays in the pool for a later cycle.
+    context = build_context(preferences)
 
-        raw_matched_cycles, unmatched_users = (
-            bounded_greedy_cycle_cover(
-                graph,
-                max_len=(
-                    args.max_cycle_length
-                ),
-            )
-        )
+    arbiter = None
 
-    except TypeError:
+    if args.no_ai:
+        print("    AI arbitration disabled (--no-ai).")
 
-        raw_matched_cycles, unmatched_users = (
-            bounded_greedy_cycle_cover(
-                graph,
-                args.max_cycle_length,
-            )
-        )
+    elif not AI_EVALUATOR_AVAILABLE:
+        print("    AI evaluator unavailable; using plain BGCC.")
 
-    # ========================================================
-    # FIX BGCC RETURN FORMAT
-    #
-    # bounded_greedy_cycle_cover returns (matched_cycles, unmatched_
-    # users) — a LIST of cycles plus a set of leftover users, not a
-    # single cycle. Previously this whole tuple was passed straight
-    # into normalize_bgcc_cycles, which silently kept only the FIRST
-    # matched cycle and dropped any others whenever BGCC found more
-    # than one non-overlapping cycle. Unpacking the tuple above fixes
-    # that; normalize_bgcc_cycles now only ever sees the real list of
-    # cycles.
-    # ========================================================
-
-    matched_cycles = normalize_bgcc_cycles(
-        raw_matched_cycles
-    )
-
-    if unmatched_users:
-
+    elif not context:
         print(
-            f"    Unmatched users: {sorted(unmatched_users)}"
+            "    No urgency/notes context from any user; "
+            "using plain BGCC."
         )
+
+    else:
+        node_ids = list(graph.nodes())
+
+        labels = build_labels(
+            node_ids,
+            fetch_display_names(db, node_ids),
+        )
+
+        known_items = {
+            str(value)
+            for listing in listings
+            for value in (listing.get("item"), listing.get("brand"))
+            if value
+        }
+
+        arbiter = make_ai_arbiter(
+            labels,
+            evaluate_candidates,
+            known_items,
+        )
+
+    matched_cycles, _unmatched_users, ai_decisions = select_cycles(
+        graph,
+        max_len=args.max_cycle_length,
+        context=context,
+        arbiter=arbiter,
+    )
 
     print(
         f"    BGCC matched "
@@ -1898,16 +1947,11 @@ def main():
             db,
             graph,
             matched_cycles,
+            ai_decisions,
         )
 
-    # ========================================================
-    # AI EVALUATOR
-    # ========================================================
-
-    run_ai_cycle_evaluation(
-        graph,
-        matched_cycles,
-    )
+    # (The old stand-alone run_ai_cycle_evaluation step was replaced by
+    # the arbitration inside select_cycles above.)
 
     # ========================================================
     # SUMMARY

@@ -33,29 +33,23 @@ IMPORTANT RULES:
 Return exactly this structure:
 
 {
-  "item_category": "guitar|camera|bicycle|book|electronics|clothing|other",
+  "item_category": "string",
   "desired_item": "string",
   "acceptable_brands": ["string"],
   "minimum_condition": "new|like_new|good|fair|any",
   "budget_or_value_signal": 0.0,
   "flexibility": 0.0,
   "keywords": ["string"],
-  "notes": "string"
+  "notes": "string",
+  "urgency": "none|low|medium|high",
+  "urgency_reason": "string"
 }
 
 Interpretation guidelines:
 
 item_category:
-- MUST be exactly one of: guitar, camera, bicycle, book, electronics,
-  clothing, other. These are the only categories listings can have in
-  this system — do not invent new categories.
-- Map the user's wording onto the closest of these seven values. A
-  calculator, mouse, headphones, laptop, etc. all map to "electronics".
-  A textbook or novel maps to "book". Anything that doesn't clearly fit
-  guitar/camera/bicycle/book/electronics/clothing maps to "other".
-- Put the user's specific item description in desired_item and keywords
-  instead — that's where "calculator", "graphing calculator", etc.
-  belong, not in item_category.
+- General category of the item the user wants.
+- Example: "guitar", "camera", "bicycle".
 
 desired_item:
 - The specific item requested.
@@ -87,6 +81,18 @@ keywords:
 
 notes:
 - Briefly preserve useful preference details that do not fit elsewhere.
+
+urgency:
+- How soon the user needs the item, based ONLY on what they wrote.
+- "none" if they did not mention any time pressure or need (the default).
+- "low" = mentioned but relaxed; "medium" = a soft deadline;
+  "high" = a hard deadline or a real problem (e.g. "my bike was stolen",
+  "recital next week", "exam on Friday").
+- Never guess urgency from tone alone.
+
+urgency_reason:
+- The user's own stated reason for the urgency, in a short phrase.
+- Empty string if urgency is "none".
 """
 
 
@@ -300,34 +306,6 @@ def normalize_preference(text):
         )
 
     # ---------------------------------------------------------
-    # Validate item_category
-    # ---------------------------------------------------------
-
-    allowed_categories = {
-        "guitar",
-        "camera",
-        "bicycle",
-        "book",
-        "electronics",
-        "clothing",
-        "other",
-    }
-
-    category = str(result.get("item_category", "")).strip().lower()
-
-    if category not in allowed_categories:
-        # AI drifted from the fixed category list (e.g. returned
-        # "calculator" instead of "electronics"). Falling back to
-        # "other" here would silently break category matching against
-        # real listings, so keep whatever the AI actually said inside
-        # desired_item/keywords (already preserved) and just clamp the
-        # category field itself to "other" so downstream category
-        # comparisons still behave predictably.
-        result["item_category"] = "other"
-    else:
-        result["item_category"] = category
-
-    # ---------------------------------------------------------
     # Validate condition
     # ---------------------------------------------------------
 
@@ -375,6 +353,24 @@ def normalize_preference(text):
 
     if not isinstance(result["keywords"], list):
         result["keywords"] = []
+
+    # ---------------------------------------------------------
+    # Urgency (optional fields: older outputs may not have them)
+    # ---------------------------------------------------------
+
+    urgency = str(result.get("urgency", "none")).strip().lower()
+
+    if urgency not in {"none", "low", "medium", "high"}:
+        urgency = "none"
+
+    reason = result.get("urgency_reason", "")
+
+    result["urgency"] = urgency
+    result["urgency_reason"] = (
+        reason.strip()
+        if isinstance(reason, str) and urgency != "none"
+        else ""
+    )
 
     # ---------------------------------------------------------
     # Return clean result

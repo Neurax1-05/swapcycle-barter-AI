@@ -3,10 +3,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'main.dart'; // Listing model
+import 'review_widgets.dart';
 import 'users_service.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  /// Whose profile to show. Null means the signed-in user's own profile.
+  final String? uid;
+
+  const ProfileScreen({super.key, this.uid});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -14,14 +18,18 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   User? user;
+  String _uid = '';
   Future<UserProfile?>? _profileFuture;
+
+  bool get _isOwn => _uid == user?.uid;
 
   @override
   void initState() {
     super.initState();
     user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      _profileFuture = UsersService.fetch(user!.uid);
+      _uid = widget.uid ?? user!.uid;
+      _profileFuture = UsersService.fetch(_uid);
     }
   }
 
@@ -32,7 +40,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('My Profile')),
+      appBar: AppBar(title: Text(_isOwn ? 'My Profile' : 'Profile')),
       body: FutureBuilder<UserProfile?>(
         future: _profileFuture,
         builder: (context, snapshot) {
@@ -54,9 +62,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           }
 
           final profile = snapshot.data;
-          final name = profile?.displayName ?? user!.displayName ?? 'Unknown';
-          final email = profile?.email ?? user!.email ?? '';
-          final photoUrl = profile?.photoUrl ?? user!.photoURL ?? '';
+          final name = profile?.displayName ??
+              (_isOwn ? user!.displayName : null) ??
+              'Unknown';
+          // Only show an email on your own profile.
+          final email = _isOwn ? (profile?.email ?? user!.email ?? '') : '';
+          final photoUrl =
+              profile?.photoUrl ?? (_isOwn ? user!.photoURL : null) ?? '';
 
           return ListView(
             padding: const EdgeInsets.all(20),
@@ -85,20 +97,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Text(email, style: const TextStyle(color: Colors.grey)),
+                    if (email.isNotEmpty)
+                      Text(email, style: const TextStyle(color: Colors.grey)),
                   ],
                 ),
               ),
               const SizedBox(height: 28),
+
+              // ---------------------------------------------------------
+              // Ratings & testimonials from completed swaps
+              // ---------------------------------------------------------
               const Text(
-                'My Listings',
+                'Ratings & testimonials',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              ReviewsSection(uid: _uid),
+
+              const SizedBox(height: 28),
+              Text(
+                _isOwn ? 'My Listings' : 'Listings',
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: FirebaseFirestore.instance
                     .collection('listings')
-                    .where('ownerId', isEqualTo: user!.uid)
+                    .where('ownerId', isEqualTo: _uid)
                     .snapshots(),
                 builder: (context, snap) {
                   if (snap.hasError) {
@@ -121,9 +147,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   final docs = snap.data!.docs;
 
                   if (docs.isEmpty) {
-                    return const Text(
-                      "You haven't listed anything yet.",
-                      style: TextStyle(color: Colors.grey),
+                    return Text(
+                      _isOwn
+                          ? "You haven't listed anything yet."
+                          : 'No listings.',
+                      style: const TextStyle(color: Colors.grey),
                     );
                   }
 

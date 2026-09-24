@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'consent_gate.dart';
 import 'login_screen.dart';
 import 'main.dart' show ListingFeedScreen; // your existing screen
 
@@ -18,7 +19,8 @@ class AuthGate extends StatelessWidget {
           );
         }
         if (snapshot.hasData) {
-          return const ListingFeedScreen();
+          // First login: show the consent / safety popup once.
+          return const ConsentGate(child: ListingFeedScreen());
         }
         return const LoginScreen();
       },

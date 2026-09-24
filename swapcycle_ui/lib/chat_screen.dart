@@ -8,6 +8,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'consent_gate.dart' show showSafetyTips;
+
 /// Max size of a compressed photo stored inline in a Firestore document.
 /// (A Firestore document is capped at 1 MiB and base64 adds ~33%.)
 const int _kMaxImageBytes = 600 * 1024;
@@ -139,7 +141,8 @@ class _ChatScreenState extends State<ChatScreen> {
         title: const Text('Share your location?'),
         content: Text(
           'This sends your current position to ${widget.otherName} '
-          'so you can meet up. It is a one-time snapshot, not live tracking.',
+          'so you can meet up. It is a one-time snapshot, not live tracking. '
+          'Meet in a public place on campus.',
         ),
         actions: [
           TextButton(
@@ -226,7 +229,16 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.otherName)),
+      appBar: AppBar(
+        title: Text(widget.otherName),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.shield_outlined),
+            tooltip: 'Meetup safety tips',
+            onPressed: () => showSafetyTips(context),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Expanded(
