@@ -68,14 +68,21 @@ service cloud.firestore {
                  .hasAll(request.resource.data.cycle));
 
       // =========================
-      // CHAT MESSAGES SUBCOLLECTION
+      // PRIVATE 1-TO-1 CHATS
+      // Path: matches/{matchId}/chats/{chatId}/messages/{messageId}
+      // chatId = the two participant UIDs, sorted and joined with '_'
+      // (see ChatScreen.chatIdFor in chat_screen.dart)
       // =========================
-      match /messages/{messageId} {
+      match /chats/{chatId}/messages/{messageId} {
+
+        // Only the two people in this chat, and only if they are in the match cycle.
         allow read: if isQiuUser()
-          && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.cycle;
+          && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.cycle
+          && request.auth.uid in chatId.split('_');
 
         allow create: if isQiuUser()
           && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.cycle
+          && request.auth.uid in chatId.split('_')
           && request.resource.data.senderId == request.auth.uid;
 
         allow update, delete: if false;
