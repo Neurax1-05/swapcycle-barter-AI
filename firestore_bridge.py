@@ -198,15 +198,35 @@ def compute_edge_weight(
 
         matched_keyword = False
 
+        listing_words = set(item_text.split())
+
         for keyword in keywords:
 
             keyword = str(
                 keyword
             ).strip().lower()
 
-            if (
-                keyword
-                and keyword in item_text
+            if not keyword:
+                continue
+
+            # Exact phrase match, e.g. keyword "mouse" found directly
+            # inside "mouse logitech electronics".
+            if keyword in item_text:
+                matched_keyword = True
+                break
+
+            # Fallback: multi-word keywords (e.g. "graphing calculator")
+            # rarely appear verbatim in a short listing string. Count it
+            # as a match if any individual word of the keyword phrase
+            # (longer than 2 chars, to skip "a"/"of"/etc.) appears as a
+            # whole word in the listing text — so "graphing calculator"
+            # still matches a listing item of "Calculator".
+            keyword_words = [
+                w for w in keyword.split() if len(w) > 2
+            ]
+
+            if keyword_words and any(
+                w in listing_words for w in keyword_words
             ):
                 matched_keyword = True
                 break
@@ -1696,7 +1716,7 @@ def main():
 
     try:
 
-        raw_matched_cycles = (
+        raw_matched_cycles, unmatched_users = (
             bounded_greedy_cycle_cover(
                 graph,
                 max_len=(
@@ -1707,7 +1727,7 @@ def main():
 
     except TypeError:
 
-        raw_matched_cycles = (
+        raw_matched_cycles, unmatched_users = (
             bounded_greedy_cycle_cover(
                 graph,
                 args.max_cycle_length,
@@ -1716,11 +1736,26 @@ def main():
 
     # ========================================================
     # FIX BGCC RETURN FORMAT
+    #
+    # bounded_greedy_cycle_cover returns (matched_cycles, unmatched_
+    # users) — a LIST of cycles plus a set of leftover users, not a
+    # single cycle. Previously this whole tuple was passed straight
+    # into normalize_bgcc_cycles, which silently kept only the FIRST
+    # matched cycle and dropped any others whenever BGCC found more
+    # than one non-overlapping cycle. Unpacking the tuple above fixes
+    # that; normalize_bgcc_cycles now only ever sees the real list of
+    # cycles.
     # ========================================================
 
     matched_cycles = normalize_bgcc_cycles(
         raw_matched_cycles
     )
+
+    if unmatched_users:
+
+        print(
+            f"    Unmatched users: {sorted(unmatched_users)}"
+        )
 
     print(
         f"    BGCC matched "

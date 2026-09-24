@@ -33,7 +33,7 @@ IMPORTANT RULES:
 Return exactly this structure:
 
 {
-  "item_category": "string",
+  "item_category": "guitar|camera|bicycle|book|electronics|clothing|other",
   "desired_item": "string",
   "acceptable_brands": ["string"],
   "minimum_condition": "new|like_new|good|fair|any",
@@ -46,8 +46,16 @@ Return exactly this structure:
 Interpretation guidelines:
 
 item_category:
-- General category of the item the user wants.
-- Example: "guitar", "camera", "bicycle".
+- MUST be exactly one of: guitar, camera, bicycle, book, electronics,
+  clothing, other. These are the only categories listings can have in
+  this system — do not invent new categories.
+- Map the user's wording onto the closest of these seven values. A
+  calculator, mouse, headphones, laptop, etc. all map to "electronics".
+  A textbook or novel maps to "book". Anything that doesn't clearly fit
+  guitar/camera/bicycle/book/electronics/clothing maps to "other".
+- Put the user's specific item description in desired_item and keywords
+  instead — that's where "calculator", "graphing calculator", etc.
+  belong, not in item_category.
 
 desired_item:
 - The specific item requested.
@@ -290,6 +298,34 @@ def normalize_preference(text):
             "AI output:\n"
             + json.dumps(result, indent=2)
         )
+
+    # ---------------------------------------------------------
+    # Validate item_category
+    # ---------------------------------------------------------
+
+    allowed_categories = {
+        "guitar",
+        "camera",
+        "bicycle",
+        "book",
+        "electronics",
+        "clothing",
+        "other",
+    }
+
+    category = str(result.get("item_category", "")).strip().lower()
+
+    if category not in allowed_categories:
+        # AI drifted from the fixed category list (e.g. returned
+        # "calculator" instead of "electronics"). Falling back to
+        # "other" here would silently break category matching against
+        # real listings, so keep whatever the AI actually said inside
+        # desired_item/keywords (already preserved) and just clamp the
+        # category field itself to "other" so downstream category
+        # comparisons still behave predictably.
+        result["item_category"] = "other"
+    else:
+        result["item_category"] = category
 
     # ---------------------------------------------------------
     # Validate condition
