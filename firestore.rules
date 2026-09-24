@@ -83,7 +83,12 @@ service cloud.firestore {
         allow create: if isQiuUser()
           && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.cycle
           && request.auth.uid in chatId.split('_')
-          && request.resource.data.senderId == request.auth.uid;
+          && request.resource.data.senderId == request.auth.uid
+          // Only known message types.
+          && request.resource.data.get('type', 'text') in ['text', 'image', 'location']
+          // Locations must carry numeric coordinates.
+          && (request.resource.data.get('type', 'text') != 'location'
+              || (request.resource.data.lat is number && request.resource.data.lng is number));
 
         allow update, delete: if false;
       }
