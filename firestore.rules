@@ -5,32 +5,92 @@ service cloud.firestore {
 
     function isQiuUser() {
       return request.auth != null
+        && request.auth.token.email != null
         && request.auth.token.email.matches('.*@qiu[.]edu[.]my$')
         && request.auth.token.email_verified == true;
     }
 
+    // =========================
+    // LISTINGS
+    // =========================
     match /listings/{listingId} {
+
       allow read: if isQiuUser();
-      allow create, update: if isQiuUser() && request.resource.data.owner == request.auth.uid;
-      allow delete: if isQiuUser() && resource.data.owner == request.auth.uid;
+
+      allow create: if isQiuUser()
+        && request.resource.data.ownerId == request.auth.uid;
+
+      allow update: if isQiuUser()
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == request.auth.uid;
+
+      allow delete: if isQiuUser()
+        && resource.data.ownerId == request.auth.uid;
     }
 
+    // =========================
+    // PREFERENCES / "I WANT"
+    // =========================
     match /preferences/{prefId} {
-      allow read: if isQiuUser() && resource.data.userId == request.auth.uid;
-      allow create: if isQiuUser() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if false; // preferences are append-only from the client
+
+      allow read: if isQiuUser()
+        && resource.data.userId == request.auth.uid;
+
+      allow create: if isQiuUser()
+        && request.resource.data.userId == request.auth.uid;
+
+      allow update, delete: if false;
     }
 
-    // Matches must be written by the trusted backend only (see
-    // firestore_schema.md's security note) — never by a client directly.
+    // =========================
+    // MATCHES
+    // =========================
     match /matches/{matchId} {
+
+      // Verified QIU users can view matches.
       allow read: if isQiuUser();
-      allow write: if false;
+
+      // Matches are created/deleted only by the trusted backend.
+      allow create, delete: if false;
+
+      // Clients can only confirm/decline their own participation.
+      allow update: if isQiuUser()
+        && request.auth.uid in resource.data.cycle
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['confirmations', 'status'])
+        && request.resource.data.get('confirmations', {})
+             .diff(resource.data.get('confirmations', {}))
+             .affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.get('status', 'pending')
+             in ['pending', 'confirmed', 'declined']
+        && (request.resource.data.get('status', 'pending') != 'confirmed'
+            || request.resource.data.get('confirmations', {}).keys()
+                 .hasAll(request.resource.data.cycle));
+
+      // =========================
+      // CHAT MESSAGES SUBCOLLECTION
+      // =========================
+      match /messages/{messageId} {
+        allow read: if isQiuUser()
+          && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.cycle;
+
+        allow create: if isQiuUser()
+          && request.auth.uid in get(/databases/$(database)/documents/matches/$(matchId)).data.cycle
+          && request.resource.data.senderId == request.auth.uid;
+
+        allow update, delete: if false;
+      }
     }
 
+    // =========================
+    // USERS
+    // =========================
     match /users/{userId} {
+
       allow read: if isQiuUser();
-      allow write: if isQiuUser() && userId == request.auth.uid;
+
+      allow write: if isQiuUser()
+        && userId == request.auth.uid;
     }
   }
 }
