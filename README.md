@@ -8,7 +8,7 @@ Uses a two-stage pipeline:
 
 The AI never creates, modifies, or overrides a match — it only evaluates and explains BGCC's output. See `architecture.md` for full pipeline details.
 
-> Midsem Checkpoint Proof of Concept — Quest International University (QIU)
+> FYP1 — Quest International University (QIU). Midsem checkpoint complete; in active development toward the FYP2 build.
 
 ## Setup
 
@@ -34,4 +34,4 @@ Copy `.env.example` to `.env` and add your own key:
 
 - `architecture.md` — system design and component responsibilities
 - `firestore_schema.md` — database schema
-- `checkpoint_evidence.md` — FYP checkpoint documentation
+- `checkpoint_evidence.md` — midsem checkpoint documentation (historical record)
