@@ -44,3 +44,5 @@ key.properties
 # --- OS junk ---
 .DS_Store
 Thumbs.db
+
+firestore-debug.log
