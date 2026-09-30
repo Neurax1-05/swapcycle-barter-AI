@@ -1,8 +1,14 @@
 """Local stand-in for the Cloud Function (no Blaze plan needed).
 
 Watches Firestore and runs the SAME pipeline as the Cloud Function
-(firestore_bridge.run_matching) whenever a new preference document is
-created. Leave it running in a terminal during demos and UAT sessions.
+(firestore_bridge.run_matching) when something happens that can change
+who should be matched:
+
+  * a new preference is created          (someone wants something)
+  * a new listing is created             (something new is on offer)
+  * a match is declined                  (people are freed for other cycles)
+
+Leave it running in a terminal during demos and UAT sessions.
 
     python local_listener.py            # AI on
     python local_listener.py --no-ai    # plain BGCC only
@@ -16,7 +22,27 @@ import time
 
 import firestore_bridge as bridge
 
-DEBOUNCE_SECONDS = 5  # wait for several people submitting at once
+DEBOUNCE_SECONDS = 5  # wait for several changes landing at once
+
+# Match statuses that free people up again.
+FREEING_STATUSES = ("declined", "expired")
+
+
+def is_trigger(collection, change):
+    """Should this change start a matching run?"""
+
+    kind = change.type.name
+
+    if collection in ("preferences", "listings"):
+        return kind == "ADDED"
+
+    if collection == "matches":
+        if kind != "MODIFIED":
+            return False
+        data = change.document.to_dict() or {}
+        return data.get("status") in FREEING_STATUSES
+
+    return False
 
 
 def main():
@@ -28,32 +54,43 @@ def main():
     db = bridge.initialize_firebase()
 
     wake = threading.Event()
-    first_snapshot = {"done": False}
+    seen_first = {}
 
-    def on_preferences(_docs, changes, _read_time):
-        # The first callback is the existing backlog: run once for it.
-        # After that, react to ADDED only. The pipeline itself edits
-        # preference docs (pending -> processed); those MODIFIED events
-        # must not trigger another run.
-        if not first_snapshot["done"]:
-            first_snapshot["done"] = True
-            print(f"Connected. {len(_docs)} preference(s) already stored; "
-                  "processing any that are pending...")
-            wake.set()
-            return
-        if any(c.type.name == "ADDED" for c in changes):
-            print("New preference detected.")
-            wake.set()
+    def make_callback(collection):
 
-    watch = db.collection("preferences").on_snapshot(on_preferences)
-    print("Listening for new preferences. Ctrl+C to stop.")
+        def callback(docs, changes, _read_time):
+            # The first callback per collection is the existing data.
+            # Only the preferences one triggers a run (to process any
+            # backlog); after that, react to real changes only. The
+            # pipeline itself edits preference docs (pending ->
+            # processed); those MODIFIED events must not loop.
+            if not seen_first.get(collection):
+                seen_first[collection] = True
+                if collection == "preferences":
+                    print(f"Connected. {len(docs)} preference(s) already "
+                          "stored; processing any that are pending...")
+                    wake.set()
+                return
+
+            if any(is_trigger(collection, c) for c in changes):
+                print(f"Change in '{collection}' detected.")
+                wake.set()
+
+        return callback
+
+    watches = [
+        db.collection(name).on_snapshot(make_callback(name))
+        for name in ("preferences", "listings", "matches")
+    ]
+    print("Listening for new preferences, new listings and declined "
+          "matches. Ctrl+C to stop.")
 
     try:
         while True:
-            # Short timeout so Ctrl+C works on Windows (a bare wait() blocks it)
+            # Short timeout so Ctrl+C works on Windows.
             if not wake.wait(timeout=1):
                 continue
-            time.sleep(DEBOUNCE_SECONDS)  # let simultaneous submissions land
+            time.sleep(DEBOUNCE_SECONDS)  # let simultaneous changes land
             wake.clear()
             try:
                 summary = bridge.run_matching(
@@ -67,7 +104,8 @@ def main():
     except KeyboardInterrupt:
         print("Stopping.")
     finally:
-        watch.unsubscribe()
+        for w in watches:
+            w.unsubscribe()
 
 
 if __name__ == "__main__":
