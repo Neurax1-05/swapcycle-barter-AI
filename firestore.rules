@@ -62,7 +62,7 @@ service cloud.firestore {
         && request.auth.uid in resource.data.cycle
         && resource.data.get('status', 'pending') in ['pending', 'confirmed']
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['confirmations', 'receipts', 'status'])
+             .hasOnly(['confirmations', 'receipts', 'status', 'declinedBy'])
         && request.resource.data.get('confirmations', {})
              .diff(resource.data.get('confirmations', {}))
              .affectedKeys().hasOnly([request.auth.uid])
@@ -76,6 +76,12 @@ service cloud.firestore {
             || resource.data.get('status', 'pending') == 'confirmed')
         && request.resource.data.get('status', 'pending')
              in ['pending', 'confirmed', 'declined', 'completed']
+        // declinedBy is optional, but if present it must be the decliner
+        // themselves and only together with status 'declined'. The backend
+        // uses it so the decliner is not offered the same swap again.
+        && (request.resource.data.get('declinedBy', null) == null
+            || (request.resource.data.declinedBy == request.auth.uid
+                && request.resource.data.get('status', 'pending') == 'declined'))
         && (request.resource.data.get('status', 'pending') != 'confirmed'
             || request.resource.data.get('confirmations', {}).keys()
                  .hasAll(request.resource.data.cycle))

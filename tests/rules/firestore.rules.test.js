@@ -172,6 +172,33 @@ describe('matches', () => {
     await assertSucceeds(updateDoc(doc(qiu('alice'), MATCH), { status: 'declined' }));
   });
 
+  test('a decliner can record themselves as declinedBy', async () => {
+    await seedMatch();
+    await assertSucceeds(updateDoc(doc(qiu('alice'), MATCH), {
+      status: 'declined', declinedBy: 'alice',
+    }));
+  });
+
+  test('declinedBy cannot name someone else', async () => {
+    await seedMatch();
+    await assertFails(updateDoc(doc(qiu('alice'), MATCH), {
+      status: 'declined', declinedBy: 'bob',
+    }));
+  });
+
+  test('declinedBy is only allowed together with a decline', async () => {
+    await seedMatch();
+    await assertFails(updateDoc(doc(qiu('alice'), MATCH), { declinedBy: 'alice' }));
+  });
+
+  test('a confirmed trade can still be declined and is then frozen', async () => {
+    await seedMatch({ status: 'confirmed', confirmations: { alice: true, bob: true, carol: true } });
+    await assertSucceeds(updateDoc(doc(qiu('alice'), MATCH), {
+      status: 'declined', declinedBy: 'alice',
+    }));
+    await assertFails(updateDoc(doc(qiu('bob'), MATCH), { status: 'pending' }));
+  });
+
   test('clients cannot edit protected fields', async () => {
     await seedMatch();
     await assertFails(updateDoc(doc(qiu('alice'), MATCH), { cycle: ['alice', 'dave'] }));

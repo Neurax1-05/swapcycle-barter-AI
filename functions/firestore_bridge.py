@@ -1606,6 +1606,180 @@ def run_ai_cycle_evaluation(
 # MAIN
 # ============================================================
 
+# ============================================================
+# LOCK USERS / LISTINGS ALREADY IN A TRADE
+# ============================================================
+#
+# Nothing in the app marks a listing as used once it is matched, and
+# preferences stay "processed" forever. Without this step every run rebuilds
+# the graph from ALL active listings and preferences, so anyone already in an
+# open match gets pulled into a new, differently-shaped cycle and receives
+# duplicate matches (several confirm/decline cards).
+#
+#   pending / confirmed  -> those users and their listings are locked
+#   completed            -> those listings are gone, and the members' older
+#                           preferences are used up (newer ones still count)
+#   declined             -> free again (the exact same cycle is never
+#                           re-proposed, because its match id already exists)
+
+OPEN_MATCH_STATUSES = ("pending", "confirmed")
+LOCKING_LISTING_STATUSES = ("pending", "confirmed", "completed")
+
+
+def fetch_locked_state(db):
+    """Read matches and return (locked_users, locked_listing_ids,
+    completed_cutoffs). completed_cutoffs maps uid -> timestamp of that
+    user's latest completed match."""
+
+    locked_users = set()
+    locked_listings = set()
+    completed_cutoffs = {}
+
+    docs = (
+        db.collection("matches")
+        .where("status", "in", list(LOCKING_LISTING_STATUSES))
+        .stream()
+    )
+
+    for doc in docs:
+        data = doc.to_dict() or {}
+        status = data.get("status")
+        cycle = data.get("cycle") or []
+
+        locked_listings.update(
+            str(x) for x in (data.get("listingIds") or []) if x
+        )
+
+        if status in OPEN_MATCH_STATUSES:
+            locked_users.update(cycle)
+
+        elif status == "completed":
+            stamp = timestamp_value(data.get("createdAt"))
+            for uid in cycle:
+                if not isinstance(stamp, (int, float)):
+                    stamp = 0
+                completed_cutoffs[uid] = max(
+                    completed_cutoffs.get(uid, 0), stamp
+                )
+
+    return locked_users, locked_listings, completed_cutoffs
+
+
+def apply_locks(
+    listings,
+    preferences,
+    locked_users,
+    locked_listings,
+    completed_cutoffs,
+):
+    """Drop listings/preferences that belong to a trade already underway."""
+
+    free_listings = [
+        listing
+        for listing in listings
+        if listing.get("id") not in locked_listings
+        and listing.get("ownerId") not in locked_users
+    ]
+
+    free_preferences = []
+
+    for preference in preferences:
+
+        uid = preference.get("userId")
+
+        if uid in locked_users:
+            continue
+
+        cutoff = completed_cutoffs.get(uid)
+
+        if cutoff is not None:
+            submitted = timestamp_value(preference.get("submittedAt"))
+            if (
+                isinstance(submitted, (int, float))
+                and submitted <= cutoff
+            ):
+                continue
+
+        free_preferences.append(preference)
+
+    return free_listings, free_preferences
+
+
+# ============================================================
+# DECLINED TRADES: FREE THE PEOPLE, DON'T OFFER THE SAME SWAP AGAIN
+# ============================================================
+#
+# A declined match dissolves: everyone in it is free for the next run (it is
+# not in the locked set above). What must NOT happen is the matcher proposing
+# the very same swap again. The app records who declined (declinedBy); the
+# edge that person would have received is removed from the graph, so that
+# cycle can no longer form while every other cycle still can. Older declined
+# matches without declinedBy fall back to removing the weakest exchange.
+
+
+def fetch_declined_edges(db):
+    """Return a set of (fromUser, toUser, listingId) edges to forbid."""
+
+    banned = set()
+
+    docs = (
+        db.collection("matches")
+        .where("status", "==", "declined")
+        .stream()
+    )
+
+    for doc in docs:
+
+        data = doc.to_dict() or {}
+        exchanges = data.get("exchanges") or []
+        decliner = data.get("declinedBy")
+
+        chosen = []
+
+        if decliner:
+            chosen = [
+                e for e in exchanges if e.get("fromUser") == decliner
+            ]
+
+        if not chosen and exchanges:
+            # Legacy decline (no declinedBy): drop the weakest exchange.
+            chosen = [
+                min(exchanges, key=lambda e: float(e.get("weight", 0) or 0))
+            ]
+
+        for e in chosen:
+            banned.add(
+                (
+                    e.get("fromUser"),
+                    e.get("toUser"),
+                    e.get("listingId", ""),
+                )
+            )
+
+    return banned
+
+
+def remove_declined_edges(graph, banned):
+    """Remove forbidden edges from the exchange graph. Returns the count."""
+
+    removed = 0
+
+    for (u, v, listing_id) in banned:
+
+        if not graph.has_edge(u, v):
+            continue
+
+        edge_listing = graph[u][v].get("listingId", "")
+
+        if listing_id and edge_listing and edge_listing != listing_id:
+            continue
+
+        graph.remove_edge(u, v)
+        removed += 1
+
+    return removed
+
+
 def run_matching(
     db,
     *,
@@ -1629,6 +1803,19 @@ def run_matching(
     listings = fetch_active_listings(
         db
     )
+
+    (
+        locked_users,
+        locked_listings,
+        completed_cutoffs,
+    ) = fetch_locked_state(db)
+
+    if locked_users or locked_listings:
+        print(
+            f"    {len(locked_users)} user(s) and "
+            f"{len(locked_listings)} listing(s) are already in a "
+            "trade; excluded from matching."
+        )
 
     # ========================================================
     # PREFERENCES
@@ -1691,6 +1878,32 @@ def run_matching(
         "preference(s) after deduplication."
     )
 
+    listings, preferences = apply_locks(
+        listings,
+        preferences,
+        locked_users,
+        locked_listings,
+        completed_cutoffs,
+    )
+
+    print(
+        f"    {len(preferences)} preference(s) and "
+        f"{len(listings)} listing(s) available after excluding "
+        "trades already underway."
+    )
+
+    if not preferences:
+
+        print()
+
+        print(
+            "Nothing new to match."
+        )
+
+        print()
+
+        return {"status": "nothing_to_process", "matched_cycles": 0}
+
     # ========================================================
     # DEBUG PREFERENCES
     # ========================================================
@@ -1707,6 +1920,17 @@ def run_matching(
         listings,
         preferences,
     )
+
+    removed_edges = remove_declined_edges(
+        graph,
+        fetch_declined_edges(db),
+    )
+
+    if removed_edges:
+        print(
+            f"    {removed_edges} edge(s) removed because that swap "
+            "was declined before."
+        )
 
     # ========================================================
     # BGCC

@@ -47,7 +47,11 @@ class MatchResultScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final docs = snapshot.data!.docs;
+          // Declined trades disappear for everyone in the cycle; the
+          // people are freed for the next matching run.
+          final docs = snapshot.data!.docs
+              .where((d) => (d.data()['status'] ?? 'pending') != 'declined')
+              .toList();
 
           if (docs.isEmpty) {
             return const Center(
@@ -220,7 +224,7 @@ class _MatchCardState extends State<MatchCard> {
 
   Future<void> _decline() async {
     try {
-      await _matchRef.update({'status': 'declined'});
+      await _matchRef.update({'status': 'declined', 'declinedBy': _myUid});
     } catch (e) {
       _snack('Could not decline: $e');
     }

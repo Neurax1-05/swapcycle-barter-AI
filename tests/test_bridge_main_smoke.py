@@ -56,6 +56,9 @@ def wired(monkeypatch):
     monkeypatch.setattr(bridge, "fetch_active_listings", lambda _db: LISTINGS)
     monkeypatch.setattr(bridge, "fetch_preferences", lambda _db: ([], PREFS))
     monkeypatch.setattr(bridge, "normalize_pending", lambda _db, pending: [])
+    monkeypatch.setattr(bridge, "fetch_locked_state",
+                        lambda _db: (set(), set(), {}))
+    monkeypatch.setattr(bridge, "fetch_declined_edges", lambda _db: set())
     monkeypatch.setattr(bridge, "fetch_display_names",
                         lambda _db, uids: {"x": "Xena", "a": "Aiden", "b": "Bella", "y": "Yusuf"})
     return db
