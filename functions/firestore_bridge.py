@@ -1705,81 +1705,6 @@ def apply_locks(
     return free_listings, free_preferences
 
 
-# ============================================================
-# DECLINED TRADES: FREE THE PEOPLE, DON'T OFFER THE SAME SWAP AGAIN
-# ============================================================
-#
-# A declined match dissolves: everyone in it is free for the next run (it is
-# not in the locked set above). What must NOT happen is the matcher proposing
-# the very same swap again. The app records who declined (declinedBy); the
-# edge that person would have received is removed from the graph, so that
-# cycle can no longer form while every other cycle still can. Older declined
-# matches without declinedBy fall back to removing the weakest exchange.
-
-
-def fetch_declined_edges(db):
-    """Return a set of (fromUser, toUser, listingId) edges to forbid."""
-
-    banned = set()
-
-    docs = (
-        db.collection("matches")
-        .where("status", "==", "declined")
-        .stream()
-    )
-
-    for doc in docs:
-
-        data = doc.to_dict() or {}
-        exchanges = data.get("exchanges") or []
-        decliner = data.get("declinedBy")
-
-        chosen = []
-
-        if decliner:
-            chosen = [
-                e for e in exchanges if e.get("fromUser") == decliner
-            ]
-
-        if not chosen and exchanges:
-            # Legacy decline (no declinedBy): drop the weakest exchange.
-            chosen = [
-                min(exchanges, key=lambda e: float(e.get("weight", 0) or 0))
-            ]
-
-        for e in chosen:
-            banned.add(
-                (
-                    e.get("fromUser"),
-                    e.get("toUser"),
-                    e.get("listingId", ""),
-                )
-            )
-
-    return banned
-
-
-def remove_declined_edges(graph, banned):
-    """Remove forbidden edges from the exchange graph. Returns the count."""
-
-    removed = 0
-
-    for (u, v, listing_id) in banned:
-
-        if not graph.has_edge(u, v):
-            continue
-
-        edge_listing = graph[u][v].get("listingId", "")
-
-        if listing_id and edge_listing and edge_listing != listing_id:
-            continue
-
-        graph.remove_edge(u, v)
-        removed += 1
-
-    return removed
-
-
 def run_matching(
     db,
     *,
@@ -1920,17 +1845,6 @@ def run_matching(
         listings,
         preferences,
     )
-
-    removed_edges = remove_declined_edges(
-        graph,
-        fetch_declined_edges(db),
-    )
-
-    if removed_edges:
-        print(
-            f"    {removed_edges} edge(s) removed because that swap "
-            "was declined before."
-        )
 
     # ========================================================
     # BGCC
