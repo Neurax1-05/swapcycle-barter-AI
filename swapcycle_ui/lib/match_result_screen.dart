@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -117,9 +119,33 @@ class _MatchCardState extends State<MatchCard> {
   // section) can show names too.
   Map<String, String> _names = const {};
 
+  // Redraws the card every second so the countdown stays live.
+  Timer? _ticker;
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  static String _fmt(Duration d) {
+    if (d.inHours >= 24) return '${d.inDays}d ${d.inHours % 24}h';
+    if (d.inHours >= 1) return '${d.inHours}h ${d.inMinutes % 60}m';
+    final m = d.inMinutes.toString().padLeft(2, '0');
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
   @override
   void initState() {
     super.initState();
+
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      final pending = (widget.data['status'] ?? 'pending') == 'pending';
+      if (mounted && pending && widget.data['expiresAt'] != null) {
+        setState(() {});
+      }
+    });
 
     _myUid = FirebaseAuth.instance.currentUser!.uid;
     _cycle = List<String>.from(widget.data['cycle'] as List? ?? []);
@@ -286,6 +312,13 @@ class _MatchCardState extends State<MatchCard> {
     final utility = (widget.data['totalUtility'] as num?)?.toDouble();
     final fairness = (widget.data['egalitarianScore'] as num?)?.toDouble();
     final status = widget.data['status'] as String? ?? 'pending';
+
+    // Deadline for answering a pending match (set by the backend). The
+    // rules enforce it with server time; this is just the visible timer.
+    final expiresAt = (widget.data['expiresAt'] as Timestamp?)?.toDate();
+    final left = expiresAt?.difference(DateTime.now());
+    final timeUp = left != null && left <= Duration.zero;
+    final urgent = left != null && left < const Duration(hours: 1);
 
     final conf =
         Map<String, dynamic>.from(widget.data['confirmations'] as Map? ?? {});
@@ -477,7 +510,32 @@ class _MatchCardState extends State<MatchCard> {
               ),
             ] else if (status == 'declined')
               const Text('This trade was declined.')
-            else
+            else ...[
+              if (left != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.timer_outlined,
+                        size: 18,
+                        color: timeUp || urgent ? Colors.red : Colors.grey,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          timeUp
+                              ? 'Time is up. This match is being released.'
+                              : 'Respond within ${_fmt(left)}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: timeUp || urgent ? Colors.red : null,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               Row(
                 children: [
                   Expanded(
@@ -486,16 +544,17 @@ class _MatchCardState extends State<MatchCard> {
                     ),
                   ),
                   TextButton(
-                    onPressed: _decline,
+                    onPressed: timeUp ? null : _decline,
                     child: const Text('Decline'),
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton(
-                    onPressed: iConfirmed ? null : _confirm,
+                    onPressed: (iConfirmed || timeUp) ? null : _confirm,
                     child: Text(iConfirmed ? 'Confirmed' : 'Confirm'),
                   ),
                 ],
               ),
+            ],
           ],
         ),
       ),
