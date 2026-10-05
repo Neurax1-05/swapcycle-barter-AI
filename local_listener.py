@@ -6,7 +6,11 @@ who should be matched:
 
   * a new preference is created          (someone wants something)
   * a new listing is created             (something new is on offer)
-  * a match is declined                  (people are freed for other cycles)
+  * a match is declined or expires       (people are freed for other cycles)
+  * a match is completed                 (its listings become 'traded')
+
+It also sweeps every minute and expires pending matches nobody confirmed
+in time (MATCH_TTL_HOURS, default 72).
 
 Leave it running in a terminal during demos and UAT sessions.
 
@@ -24,8 +28,14 @@ import firestore_bridge as bridge
 
 DEBOUNCE_SECONDS = 5  # wait for several changes landing at once
 
+SWEEP_SECONDS = 60  # how often stale pending matches are expired
+
 # Match statuses that free people up again.
 FREEING_STATUSES = ("declined", "expired")
+
+# Statuses that start a run: freed people can be re-matched, and a
+# completed trade must flip its listings to 'traded'.
+TRIGGER_STATUSES = FREEING_STATUSES + ("completed",)
 
 
 def is_trigger(collection, change):
@@ -40,7 +50,7 @@ def is_trigger(collection, change):
         if kind != "MODIFIED":
             return False
         data = change.document.to_dict() or {}
-        return data.get("status") in FREEING_STATUSES
+        return data.get("status") in TRIGGER_STATUSES
 
     return False
 
@@ -82,11 +92,21 @@ def main():
         db.collection(name).on_snapshot(make_callback(name))
         for name in ("preferences", "listings", "matches")
     ]
-    print("Listening for new preferences, new listings and declined "
+    print("Listening for new preferences, new listings and freed or finished "
           "matches. Ctrl+C to stop.")
+
+    last_sweep = 0.0
 
     try:
         while True:
+            if time.monotonic() - last_sweep >= SWEEP_SECONDS:
+                last_sweep = time.monotonic()
+                try:
+                    # Each expiry edits a match, which wakes the loop below.
+                    bridge.expire_stale_matches(db)
+                except Exception as exc:
+                    print(f"Expiry sweep failed: {exc!r}")
+
             # Short timeout so Ctrl+C works on Windows.
             if not wake.wait(timeout=1):
                 continue

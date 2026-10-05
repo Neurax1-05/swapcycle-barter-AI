@@ -56,6 +56,8 @@ def wired(monkeypatch):
     monkeypatch.setattr(bridge, "fetch_active_listings", lambda _db: LISTINGS)
     monkeypatch.setattr(bridge, "fetch_preferences", lambda _db: ([], PREFS))
     monkeypatch.setattr(bridge, "normalize_pending", lambda _db, pending: [])
+    monkeypatch.setattr(bridge, "expire_stale_matches", lambda _db: 0)
+    monkeypatch.setattr(bridge, "sync_listing_statuses", lambda _db: 0)
     monkeypatch.setattr(bridge, "fetch_locked_state",
                         lambda _db: (set(), set(), {}))
     monkeypatch.setattr(bridge, "fetch_display_names",

@@ -16,7 +16,8 @@ const {
   assertSucceeds,
 } = require('@firebase/rules-unit-testing');
 const {
-  doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp,
+  doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp,
+  collection, query, where,
 } = require('firebase/firestore');
 
 let env;
@@ -90,7 +91,7 @@ describe('authentication', () => {
 // ---------------------------------------------------------------------------
 describe('listings', () => {
   test('owner can create their own listing', async () => {
-    await assertSucceeds(setDoc(doc(qiu('alice'), 'listings/l1'), { ownerId: 'alice' }));
+    await assertSucceeds(setDoc(doc(qiu('alice'), 'listings/l1'), { ownerId: 'alice', status: 'active' }));
   });
 
   test('cannot create a listing owned by someone else', async () => {
@@ -102,6 +103,26 @@ describe('listings', () => {
     await assertFails(updateDoc(doc(qiu('alice'), 'listings/l1'), { item: 'stolen' }));
     await assertFails(deleteDoc(doc(qiu('alice'), 'listings/l1')));
     await assertSucceeds(deleteDoc(doc(qiu('bob'), 'listings/l1')));
+  });
+
+  test('a new listing must start as active', async () => {
+    await assertFails(setDoc(doc(qiu('alice'), 'listings/l1'), { ownerId: 'alice', status: 'traded' }));
+    await assertFails(setDoc(doc(qiu('alice'), 'listings/l1'), { ownerId: 'alice' }));
+  });
+
+  test('owner cannot edit or delete a listing that is in a trade', async () => {
+    for (const status of ['in_trade', 'traded']) {
+      await seed((db) => setDoc(doc(db, 'listings/l1'), { ownerId: 'alice', item: 'guitar', status }));
+      await assertFails(updateDoc(doc(qiu('alice'), 'listings/l1'), { item: 'swapped' }));
+      await assertFails(deleteDoc(doc(qiu('alice'), 'listings/l1')));
+    }
+  });
+
+  test('owner cannot set the trade status themselves', async () => {
+    await seed((db) => setDoc(doc(db, 'listings/l1'), { ownerId: 'alice', item: 'guitar', status: 'active' }));
+    await assertFails(updateDoc(doc(qiu('alice'), 'listings/l1'), { status: 'in_trade' }));
+    await assertFails(updateDoc(doc(qiu('alice'), 'listings/l1'), { status: 'traded' }));
+    await assertSucceeds(updateDoc(doc(qiu('alice'), 'listings/l1'), { item: 'better guitar' }));
   });
 
   test('owner cannot hand a listing to someone else', async () => {
@@ -136,6 +157,40 @@ describe('matches', () => {
     await assertFails(setDoc(doc(qiu('alice'), 'matches/fake'), { cycle: ['alice', 'bob'] }));
     await seedMatch();
     await assertFails(deleteDoc(doc(qiu('alice'), MATCH)));
+  });
+
+  test('only cycle members can read a match', async () => {
+    await seedMatch();
+    await assertSucceeds(getDoc(doc(qiu('alice'), MATCH)));
+    await assertFails(getDoc(doc(qiu('mallory'), MATCH)));
+  });
+
+  test('a user can query only their own matches', async () => {
+    await seedMatch();
+    await assertSucceeds(getDocs(query(collection(qiu('alice'), 'matches'), where('cycle', 'array-contains', 'alice'))));
+    await assertFails(getDocs(collection(qiu('mallory'), 'matches')));
+  });
+
+  test('a pending match past its deadline cannot be confirmed or declined', async () => {
+    await seedMatch({ expiresAt: Timestamp.fromMillis(Date.now() - 60000) });
+    await assertFails(updateDoc(doc(qiu('alice'), MATCH), { 'confirmations.alice': true }));
+    await assertFails(updateDoc(doc(qiu('alice'), MATCH), { status: 'declined', declinedBy: 'alice' }));
+  });
+
+  test('a pending match before its deadline still works normally', async () => {
+    await seedMatch({ expiresAt: Timestamp.fromMillis(Date.now() + 3600000) });
+    await assertSucceeds(updateDoc(doc(qiu('alice'), MATCH), { 'confirmations.alice': true }));
+  });
+
+  test('clients cannot expire a match themselves', async () => {
+    await seedMatch();
+    await assertFails(updateDoc(doc(qiu('alice'), MATCH), { status: 'expired' }));
+  });
+
+  test('an expired match is frozen', async () => {
+    await seedMatch({ status: 'expired' });
+    await assertFails(updateDoc(doc(qiu('alice'), MATCH), { 'confirmations.alice': true }));
+    await assertFails(updateDoc(doc(qiu('alice'), MATCH), { status: 'declined', declinedBy: 'alice' }));
   });
 
   test('a participant can confirm for themselves', async () => {
@@ -384,8 +439,20 @@ describe('users', () => {
       { consentVersion: 1, consentAcceptedAt: serverTimestamp() }, { merge: true }));
   });
 
-  test('QIU users can read other profiles', async () => {
+  test('QIU users can read other profiles one at a time', async () => {
     await seed((db) => setDoc(doc(db, 'users/bob'), { displayName: 'Bob' }));
     await assertSucceeds(getDoc(doc(qiu('alice'), 'users/bob')));
+  });
+
+  test('nobody can list the users collection', async () => {
+    await seed((db) => setDoc(doc(db, 'users/bob'), { displayName: 'Bob' }));
+    await assertFails(getDocs(collection(qiu('alice'), 'users')));
+  });
+
+  test('the email cannot be stored on a profile', async () => {
+    await assertFails(setDoc(doc(qiu('alice'), 'users/alice'),
+      { displayName: 'Alice', email: 'alice@qiu.edu.my' }));
+    await assertSucceeds(setDoc(doc(qiu('alice'), 'users/alice'),
+      { displayName: 'Alice', photoUrl: '', lastSeen: serverTimestamp() }));
   });
 });

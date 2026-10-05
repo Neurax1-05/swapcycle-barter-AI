@@ -17,15 +17,23 @@ service cloud.firestore {
 
       allow read: if isQiuUser();
 
+      // New listings start as 'active'. 'in_trade' / 'traded' are set only by
+      // the backend (admin SDK), never by a client.
       allow create: if isQiuUser()
-        && request.resource.data.ownerId == request.auth.uid;
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.status == 'active';
 
+      // Owners can edit or remove a listing only while it is 'active', so an
+      // item cannot be changed or pulled out from under a trade in progress.
       allow update: if isQiuUser()
         && resource.data.ownerId == request.auth.uid
-        && request.resource.data.ownerId == request.auth.uid;
+        && request.resource.data.ownerId == request.auth.uid
+        && resource.data.get('status', 'active') == 'active'
+        && request.resource.data.get('status', 'active') == 'active';
 
       allow delete: if isQiuUser()
-        && resource.data.ownerId == request.auth.uid;
+        && resource.data.ownerId == request.auth.uid
+        && resource.data.get('status', 'active') == 'active';
     }
 
     // =========================
@@ -47,8 +55,9 @@ service cloud.firestore {
     // =========================
     match /matches/{matchId} {
 
-      // Verified QIU users can view matches.
-      allow read: if isQiuUser();
+      // Only the people in the cycle can see a match (not every student).
+      allow read: if isQiuUser()
+        && request.auth.uid in resource.data.cycle;
 
       // Matches are created/deleted only by the trusted backend.
       allow create, delete: if false;
@@ -61,6 +70,11 @@ service cloud.firestore {
       allow update: if isQiuUser()
         && request.auth.uid in resource.data.cycle
         && resource.data.get('status', 'pending') in ['pending', 'confirmed']
+        // A pending match past its deadline can no longer be confirmed or
+        // declined by a client; the backend flips it to 'expired'.
+        && (resource.data.get('status', 'pending') != 'pending'
+            || resource.data.get('expiresAt', null) == null
+            || request.time < resource.data.expiresAt)
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['confirmations', 'receipts', 'status', 'declinedBy'])
         && request.resource.data.get('confirmations', {})
@@ -151,9 +165,20 @@ service cloud.firestore {
     // =========================
     match /users/{userId} {
 
-      allow read: if isQiuUser();
+      // Profiles are looked up one at a time (names/photos in cycles, chats
+      // and reviews); nobody can list or scrape the whole collection.
+      allow get: if isQiuUser();
+      allow list: if false;
 
-      allow write: if isQiuUser()
+      // Only these fields may exist. The email is deliberately NOT stored
+      // here: the app shows your own email straight from your sign-in.
+      allow create, update: if isQiuUser()
+        && userId == request.auth.uid
+        && request.resource.data.keys().hasOnly(
+             ['displayName', 'photoUrl', 'lastSeen',
+              'consentVersion', 'consentAcceptedAt']);
+
+      allow delete: if isQiuUser()
         && userId == request.auth.uid;
     }
   }

@@ -1,7 +1,9 @@
 import argparse
 import hashlib
 import os
+import re
 import sys
+from datetime import datetime, timedelta, timezone
 
 import firebase_admin
 import networkx as nx
@@ -59,6 +61,42 @@ CONDITION_RANK = {
 }
 
 EDGE_WEIGHT_THRESHOLD = 0.5
+
+# Categories so wide that "same category" says almost nothing (a phone and
+# a pair of headphones are both "electronics"). For these the listing must
+# also hit the wanted item or one of the keywords to count as relevant.
+BROAD_CATEGORIES = {
+    "electronics",
+    "clothing",
+    "other",
+    "misc",
+    "general",
+}
+
+# A pending match nobody finishes confirming is released after this long.
+MATCH_TTL_HOURS = float(os.getenv("MATCH_TTL_HOURS", "72"))
+
+
+def _tokens(text):
+    return set(re.findall(r"[a-z0-9]+", str(text).lower()))
+
+
+def phrase_in_text(phrase, text):
+    """Whole-word match ('phone' must not hit 'headphones'). A plain
+    plural ('guitars') still matches."""
+
+    phrase = str(phrase or "").strip().lower()
+
+    if not phrase:
+        return False
+
+    pattern = (
+        r"(?<![a-z0-9])"
+        + re.escape(phrase)
+        + r"(?:s|es)?(?![a-z0-9])"
+    )
+
+    return re.search(pattern, str(text).lower()) is not None
 
 
 # ============================================================
@@ -139,11 +177,17 @@ def compute_edge_weight(
         )
     ).strip().lower()
 
-    # Combined text for matching
+    # Broad categories ("electronics", "other") carry no signal, so they
+    # are left out of the text a wanted item / keyword is matched against.
+    broad = (
+        preference_category in BROAD_CATEGORIES
+        or listing_category in BROAD_CATEGORIES
+    )
+
     item_text = (
         f"{listing_item} "
         f"{listing_brand} "
-        f"{listing_category}"
+        f"{'' if listing_category in BROAD_CATEGORIES else listing_category}"
     ).strip().lower()
 
     # ========================================================
@@ -157,16 +201,16 @@ def compute_edge_weight(
         if desired_item == listing_item:
             exact_item_match = True
 
-        elif desired_item in item_text:
+        elif phrase_in_text(desired_item, item_text):
             exact_item_match = True
 
         else:
-            desired_words = set(
-                desired_item.split()
+            desired_words = _tokens(
+                desired_item
             )
 
-            listing_words = set(
-                item_text.split()
+            listing_words = _tokens(
+                item_text
             )
 
             if (
@@ -190,6 +234,7 @@ def compute_edge_weight(
         preference_category
         and listing_category
         == preference_category
+        and not broad
     ):
 
         weight += 0.35
@@ -215,7 +260,10 @@ def compute_edge_weight(
 
             if (
                 keyword
-                and keyword in item_text
+                and phrase_in_text(
+                    keyword,
+                    item_text,
+                )
             ):
                 matched_keyword = True
                 break
@@ -1412,6 +1460,13 @@ def save_matches(
 
             "createdAt":
                 firestore.SERVER_TIMESTAMP,
+
+            "expiresAt": (
+                datetime.now(timezone.utc)
+                + timedelta(
+                    hours=MATCH_TTL_HOURS
+                )
+            ),
         }
 
         # ----------------------------------------------------
@@ -1705,6 +1760,139 @@ def apply_locks(
     return free_listings, free_preferences
 
 
+# ============================================================
+# EXPIRY + LISTING STATUS HOUSEKEEPING
+# ============================================================
+
+def _as_datetime(value):
+    """Firestore timestamps arrive as datetimes; treat naive ones as UTC."""
+
+    if not isinstance(value, datetime):
+        return None
+
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+
+    return value
+
+
+def expire_stale_matches(db, now=None):
+    """Pending matches past their expiresAt become 'expired', which frees
+    every member for the next run. Matches written before expiresAt existed
+    fall back to createdAt + MATCH_TTL_HOURS. Returns how many expired."""
+
+    now = now or datetime.now(timezone.utc)
+    ttl = timedelta(hours=MATCH_TTL_HOURS)
+    expired = 0
+
+    docs = (
+        db.collection("matches")
+        .where("status", "==", "pending")
+        .stream()
+    )
+
+    for doc in docs:
+        data = doc.to_dict() or {}
+
+        deadline = _as_datetime(data.get("expiresAt"))
+
+        if deadline is None:
+            created = _as_datetime(data.get("createdAt"))
+
+            if created is None:
+                continue
+
+            deadline = created + ttl
+
+        if deadline <= now:
+            (
+                db.collection("matches")
+                .document(doc.id)
+                .update(
+                    {
+                        "status": "expired",
+                        "expiredAt": firestore.SERVER_TIMESTAMP,
+                    }
+                )
+            )
+            expired += 1
+
+    if expired:
+        print(f"    {expired} stale pending match(es) expired.")
+
+    return expired
+
+
+def sync_listing_statuses(db):
+    """Keep listings.status in step with the matches (backend only; the
+    rules stop owners from setting it):
+
+      listing in a pending/confirmed match -> 'in_trade'
+      listing in a completed match         -> 'traded'
+      'in_trade' but no open match any more -> back to 'active'
+
+    Returns the number of listings changed."""
+
+    in_trade = set()
+    traded = set()
+
+    docs = (
+        db.collection("matches")
+        .where("status", "in", list(LOCKING_LISTING_STATUSES))
+        .stream()
+    )
+
+    for doc in docs:
+        data = doc.to_dict() or {}
+        ids = {str(x) for x in (data.get("listingIds") or []) if x}
+
+        if data.get("status") == "completed":
+            traded |= ids
+        else:
+            in_trade |= ids
+
+    in_trade -= traded
+    changed = 0
+    listings = db.collection("listings")
+
+    for listing_id, target in (
+        [(i, "traded") for i in sorted(traded)]
+        + [(i, "in_trade") for i in sorted(in_trade)]
+    ):
+        snap = listings.document(listing_id).get()
+
+        if not snap.exists:
+            continue
+
+        if (snap.to_dict() or {}).get("status") != target:
+            listings.document(listing_id).update({"status": target})
+            changed += 1
+
+    stuck = (
+        listings.where("status", "==", "in_trade").stream()
+    )
+
+    for doc in stuck:
+        if doc.id not in in_trade and doc.id not in traded:
+            listings.document(doc.id).update({"status": "active"})
+            changed += 1
+
+    if changed:
+        print(f"    {changed} listing status(es) updated.")
+
+    return changed
+
+
+def housekeeping(db):
+    """Run before every matching pass. Never blocks matching."""
+
+    for step in (expire_stale_matches, sync_listing_statuses):
+        try:
+            step(db)
+        except Exception as exc:
+            print(f"    WARNING: {step.__name__} failed: {exc}")
+
+
 def run_matching(
     db,
     *,
@@ -1720,6 +1908,11 @@ def run_matching(
     Returns a small summary dict.
     """
 
+
+    # Expire stale pending matches and sync listing statuses first, so
+    # freed people and items are part of this run.
+    if not dry_run:
+        housekeeping(db)
 
     # ========================================================
     # LISTINGS
@@ -2045,6 +2238,11 @@ def run_matching(
             matched_cycles,
             ai_decisions,
         )
+
+        try:
+            sync_listing_statuses(db)
+        except Exception as exc:
+            print(f"    WARNING: listing status sync failed: {exc}")
 
     # (The old stand-alone run_ai_cycle_evaluation step was replaced by
     # the arbitration inside select_cycles above.)

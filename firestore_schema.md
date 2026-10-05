@@ -16,7 +16,7 @@
 | `category` | Item category (guitar, camera, bicycle, etc.) |
 | `description` | Free-text description |
 | `condition` | Item condition (fair / good / like_new / new) |
-| `status` | Listing status (active, matched, removed, etc.) |
+| `status` | `active` (set by the app) → `in_trade` while in a pending/confirmed match → `traded` once the match completes. The backend sets the last two; owners can only edit or delete an `active` listing. A declined or expired match puts the listing back to `active`. |
 | `createdAt` | Listing creation timestamp |
 
 ## `preferences/{preferenceId}`
@@ -37,8 +37,17 @@
 | `totalUtility` | Sum of utility scores across the cycle |
 | `egalitarianScore` | Fairness score (min utility across participants) |
 | `algorithm` | Matching algorithm used (e.g. BGCC) |
-| `status` | Match status (pending, confirmed, completed, etc.) |
+| `status` | `pending` → `confirmed` → `completed`; or `declined` (a member said no) or `expired` (set by the backend) |
 | `createdAt` | Timestamp |
+| `expiresAt` | Deadline for a `pending` match (`MATCH_TTL_HOURS`, default 72). Past it, clients can no longer confirm or decline, and the backend sets `expired`, freeing everyone for the next run |
+
+## `users/{uid}`
+| Field | Description |
+|---|---|
+| `displayName`, `photoUrl`, `lastSeen` | Public profile, read one document at a time by any QIU user (listing the collection is denied) |
+| `consentVersion`, `consentAcceptedAt` | Consent choice |
+
+The email is not stored here. Matches are readable only by the users in `cycle`.
 
 ## Security note
 

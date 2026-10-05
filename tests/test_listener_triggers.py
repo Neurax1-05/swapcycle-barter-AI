@@ -25,3 +25,8 @@ def test_declined_match_triggers_but_other_match_changes_do_not():
     assert not L.is_trigger("matches", change("MODIFIED", {"status": "confirmed"}))
     assert not L.is_trigger("matches", change("ADDED", {"status": "declined"}))
     assert not L.is_trigger("matches", change("MODIFIED", {"status": "pending"}))
+
+
+def test_expired_and_completed_matches_trigger_a_run():
+    assert L.is_trigger("matches", change("MODIFIED", {"status": "expired"}))
+    assert L.is_trigger("matches", change("MODIFIED", {"status": "completed"}))

@@ -4,13 +4,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 class UserProfile {
   final String uid;
   final String displayName;
-  final String email;
   final String photoUrl;
 
   const UserProfile({
     required this.uid,
     required this.displayName,
-    required this.email,
     required this.photoUrl,
   });
 
@@ -21,7 +19,6 @@ class UserProfile {
     return UserProfile(
       uid: doc.id,
       displayName: data['displayName'] as String? ?? 'Unknown',
-      email: data['email'] as String? ?? '',
       photoUrl: data['photoUrl'] as String? ?? '',
     );
   }
@@ -39,7 +36,9 @@ class UsersService {
     return _users.doc(user.uid).set({
       'displayName':
           user.displayName ?? user.email?.split('@').first ?? 'Unknown',
-      'email': user.email ?? '',
+      // The email is no longer kept on the profile (other students can read
+      // profiles); this removes it from accounts created before the change.
+      'email': FieldValue.delete(),
       'photoUrl': user.photoURL ?? '',
       'lastSeen': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));

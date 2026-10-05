@@ -66,7 +66,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               (_isOwn ? user!.displayName : null) ??
               'Unknown';
           // Only show an email on your own profile.
-          final email = _isOwn ? (profile?.email ?? user!.email ?? '') : '';
+          final email = _isOwn ? (user!.email ?? '') : '';
           final photoUrl =
               profile?.photoUrl ?? (_isOwn ? user!.photoURL : null) ?? '';
 

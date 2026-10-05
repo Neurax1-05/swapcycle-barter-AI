@@ -47,11 +47,12 @@ class MatchResultScreen extends StatelessWidget {
             return const Center(child: CircularProgressIndicator());
           }
 
-          // Declined trades disappear for everyone in the cycle; the
-          // people are freed for the next matching run.
-          final docs = snapshot.data!.docs
-              .where((d) => (d.data()['status'] ?? 'pending') != 'declined')
-              .toList();
+          // Declined and expired trades disappear for everyone in the
+          // cycle; the people are freed for the next matching run.
+          final docs = snapshot.data!.docs.where((d) {
+            final status = d.data()['status'] ?? 'pending';
+            return status != 'declined' && status != 'expired';
+          }).toList();
 
           if (docs.isEmpty) {
             return const Center(
