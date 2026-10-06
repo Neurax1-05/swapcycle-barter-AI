@@ -91,10 +91,25 @@ class AvailableItemsScreen extends StatelessWidget {
                             ? const Icon(Icons.person)
                             : null,
                       ),
-                      title: Text(listing.item),
-                      subtitle: Text(
-                        '${listing.brand} • ${listing.condition}\n'
-                        'Listed by $name',
+                      title: Text(
+                        listing.item,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${listing.brand} • ${listing.condition}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            'Listed by $name',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                       ),
                     );
                   },

@@ -92,13 +92,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const SizedBox(height: 12),
                     Text(
                       name,
+                      textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     if (email.isNotEmpty)
-                      Text(email, style: const TextStyle(color: Colors.grey)),
+                      Text(
+                        email,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.grey),
+                      ),
                   ],
                 ),
               ),

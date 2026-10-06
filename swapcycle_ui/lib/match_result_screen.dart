@@ -422,10 +422,15 @@ class _MatchCardState extends State<MatchCard> {
                             (uid) => Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                OutlinedButton.icon(
+                                Flexible(
+                                  child: OutlinedButton.icon(
                                   icon: const Icon(
                                       Icons.chat_bubble_outline),
-                                  label: Text('Chat with ${nameOf(uid)}'),
+                                  label: Text(
+                                    'Chat with ${nameOf(uid)}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                   onPressed: () => Navigator.push(
                                     context,
                                     MaterialPageRoute(
@@ -435,6 +440,7 @@ class _MatchCardState extends State<MatchCard> {
                                         otherName: nameOf(uid),
                                       ),
                                     ),
+                                  ),
                                   ),
                                 ),
                                 IconButton(
@@ -495,18 +501,14 @@ class _MatchCardState extends State<MatchCard> {
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '$receivedCount of ${_cycle.length} received',
-                    ),
-                  ),
-                  ElevatedButton(
-                    onPressed: iReceived ? null : _markReceived,
-                    child: Text(iReceived ? 'Received' : 'I received my item'),
-                  ),
-                ],
+              Text('$receivedCount of ${_cycle.length} received'),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: ElevatedButton(
+                  onPressed: iReceived ? null : _markReceived,
+                  child: Text(iReceived ? 'Received' : 'I received my item'),
+                ),
               ),
             ] else if (status == 'declined')
               const Text('This trade was declined.')
@@ -536,13 +538,11 @@ class _MatchCardState extends State<MatchCard> {
                     ],
                   ),
                 ),
+              Text('$confirmedCount of ${_cycle.length} confirmed'),
+              const SizedBox(height: 4),
               Row(
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Expanded(
-                    child: Text(
-                      '$confirmedCount of ${_cycle.length} confirmed',
-                    ),
-                  ),
                   TextButton(
                     onPressed: timeUp ? null : _decline,
                     child: const Text('Decline'),
@@ -719,7 +719,14 @@ class _ReviewSection extends StatelessWidget {
           final rating = (doc.data()?['rating'] as num?)?.toDouble() ?? 0;
           return Row(
             children: [
-              Text('You rated $giverName  '),
+              Expanded(
+                child: Text(
+                  'You rated $giverName',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
               StarRow(rating: rating, size: 18),
             ],
           );
