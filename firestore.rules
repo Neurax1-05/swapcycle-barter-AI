@@ -44,8 +44,22 @@ service cloud.firestore {
       allow read: if isQiuUser()
         && resource.data.userId == request.auth.uid;
 
+      // Clients may only submit the raw request. 'status' must start as
+      // 'pending' and 'normalized' can never be supplied: otherwise a user
+      // could skip the AI step and inject arbitrary matching fields (or text
+      // that is later shown to the AI arbiter). Size is capped to bound the
+      // cost of each LLM call.
       allow create: if isQiuUser()
-        && request.resource.data.userId == request.auth.uid;
+        && request.resource.data.keys().hasOnly(
+             ['userId', 'rawText', 'submittedAt', 'status'])
+        && request.resource.data.keys().hasAll(['userId', 'rawText', 'status'])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.rawText is string
+        && request.resource.data.rawText.size() > 0
+        && request.resource.data.rawText.size() <= 500
+        && (!('submittedAt' in request.resource.data)
+            || request.resource.data.submittedAt == request.time);
 
       allow update, delete: if false;
     }

@@ -140,8 +140,26 @@ describe('preferences', () => {
   });
 
   test('cannot submit a preference for someone else', async () => {
-    await assertFails(setDoc(doc(qiu('alice'), 'preferences/p1'), { userId: 'bob' }));
-    await assertSucceeds(setDoc(doc(qiu('alice'), 'preferences/p2'), { userId: 'alice' }));
+    const pref = (uid, extra = {}) => ({
+      userId: uid, rawText: 'I want a guitar', status: 'pending', ...extra,
+    });
+    await assertFails(setDoc(doc(qiu('alice'), 'preferences/p1'), pref('bob')));
+    await assertSucceeds(setDoc(doc(qiu('alice'), 'preferences/p2'), pref('alice')));
+  });
+
+  test('a client cannot forge AI output, status or oversized text', async () => {
+    const base = { userId: 'alice', rawText: 'I want a guitar', status: 'pending' };
+    // skipping the AI step by supplying 'normalized' / 'processed'
+    await assertFails(setDoc(doc(qiu('alice'), 'preferences/f1'),
+      { ...base, normalized: { desired_item: 'x' } }));
+    await assertFails(setDoc(doc(qiu('alice'), 'preferences/f2'),
+      { ...base, status: 'processed' }));
+    // unknown extra field
+    await assertFails(setDoc(doc(qiu('alice'), 'preferences/f3'), { ...base, admin: true }));
+    // empty and oversized text
+    await assertFails(setDoc(doc(qiu('alice'), 'preferences/f4'), { ...base, rawText: '' }));
+    await assertFails(setDoc(doc(qiu('alice'), 'preferences/f5'),
+      { ...base, rawText: 'x'.repeat(501) }));
   });
 
   test('preferences cannot be edited or deleted by clients', async () => {

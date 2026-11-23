@@ -3,6 +3,9 @@ import hashlib
 import os
 import re
 import sys
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import firebase_admin
@@ -18,7 +21,9 @@ from bgcc_prototype import (
     find_cycles,
 )
 
+from matching_config import DEFAULT_WEIGHTS, engine_from_env, weights_from_env
 from cycle_arbitration import (
+    edge_tiebreak,
     build_context,
     build_labels,
     make_ai_arbiter,
@@ -60,7 +65,7 @@ CONDITION_RANK = {
     "any": 0,
 }
 
-EDGE_WEIGHT_THRESHOLD = 0.5
+EDGE_WEIGHT_THRESHOLD = DEFAULT_WEIGHTS.threshold  # see matching_config.py
 
 # Categories so wide that "same category" says almost nothing (a phone and
 # a pair of headphones are both "electronics"). For these the listing must
@@ -131,6 +136,7 @@ def meets_min_condition(
 def compute_edge_weight(
     preference,
     listing,
+    weights=None,
 ):
     """
     Calculate how well a listing satisfies
@@ -140,7 +146,9 @@ def compute_edge_weight(
     priority over AI category classification.
     """
 
-    weight = 0.3
+    w = weights or DEFAULT_WEIGHTS
+
+    weight = w.base
 
     preference_category = str(
         preference.get(
@@ -224,7 +232,7 @@ def compute_edge_weight(
     if exact_item_match:
 
         # Strong exact-item match.
-        weight += 0.35
+        weight += w.exact_item
 
     # ========================================================
     # CATEGORY MATCH
@@ -237,7 +245,7 @@ def compute_edge_weight(
         and not broad
     ):
 
-        weight += 0.35
+        weight += w.category
 
     # ========================================================
     # KEYWORD MATCH
@@ -270,11 +278,11 @@ def compute_edge_weight(
 
         if matched_keyword:
 
-            weight += 0.15
+            weight += w.keyword
 
         else:
 
-            weight -= 0.2
+            weight -= w.no_relevance_penalty
 
     # ========================================================
     # BRAND
@@ -304,7 +312,7 @@ def compute_edge_weight(
         in acceptable_brands
     ):
 
-        weight += 0.1
+        weight += w.brand
 
     # ========================================================
     # CONDITION
@@ -329,11 +337,11 @@ def compute_edge_weight(
         minimum_condition,
     ):
 
-        weight += 0.15
+        weight += w.condition_ok
 
     else:
 
-        weight -= 0.25
+        weight -= w.condition_fail_penalty
 
     # ========================================================
     # FLEXIBILITY
@@ -355,7 +363,7 @@ def compute_edge_weight(
     ):
         flexibility = 0.0
 
-    weight += flexibility * 0.1
+    weight += flexibility * w.flexibility_scale
 
     return max(
         0.0,
@@ -594,84 +602,82 @@ def fetch_preferences(db):
 # NORMALIZE PENDING PREFERENCES
 # ============================================================
 
+MAX_NORMALIZE_ATTEMPTS = 3          # then the preference is marked 'failed'
+NORMALIZE_WORKERS = int(os.getenv("SWAP_LLM_WORKERS", "6"))
+NORMALIZE_BUDGET_SECONDS = float(os.getenv("SWAP_NORMALIZE_BUDGET", "180"))
+
+
+def _normalize_one(preference):
+    """LLM call only (no Firestore) so it is safe to run in a thread."""
+    normalized = normalize_preference(preference.get("rawText", ""))
+    if normalized is None:
+        raise ValueError("AI returned no normalized preference.")
+    return normalized
+
+
 def normalize_pending(
     db,
     pending,
 ):
+    """
+    Normalise pending preferences with bounded concurrency.
 
+    * LLM calls run in a small thread pool (was: one blocking call at a time).
+    * A wall-clock budget stops new work before the Cloud Function timeout;
+      anything not reached stays 'pending' for the next run.
+    * Each failure bumps `normalizeAttempts`; after MAX_NORMALIZE_ATTEMPTS the
+      preference is marked 'failed' so one bad row stops costing an LLM call
+      (and up to 60s) on every future run.
+    """
     print(
         "[3] Normalizing pending preferences via AI..."
     )
 
     processed = []
+    deadline = time.monotonic() + NORMALIZE_BUDGET_SECONDS
 
-    for preference in pending:
-
-        doc_id = preference.get(
-            "id",
-            "",
-        )
-
-        raw_text = preference.get(
-            "rawText",
-            "",
-        )
-
-        print(
-            f"    Normalizing preference {doc_id}..."
-        )
-
+    def work(preference):
+        if time.monotonic() > deadline:
+            return preference, None, "skipped: time budget used"
         try:
-
-            normalized = normalize_preference(
-                raw_text
-            )
-
-            if normalized is None:
-
-                raise ValueError(
-                    "AI returned no normalized preference."
-                )
-
-            update_data = {
-                "normalized": normalized,
-                "status": "processed",
-            }
-
-            (
-                db.collection(
-                    "preferences"
-                )
-                .document(
-                    doc_id
-                )
-                .update(
-                    update_data
-                )
-            )
-
-            preference[
-                "normalized"
-            ] = normalized
-
-            preference[
-                "status"
-            ] = "processed"
-
-            processed.append(
-                preference
-            )
-
-            print(
-                f"    Successfully normalized {doc_id}."
-            )
-
+            return preference, _normalize_one(preference), None
         except Exception as e:
+            return preference, None, e
 
-            print(
-                f"    WARNING: Failed to normalize "
-                f"{doc_id}: {e}"
-            )
+    workers = max(1, min(NORMALIZE_WORKERS, len(pending) or 1))
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(work, pending))
+
+    for preference, normalized, error in results:
+
+        doc_id = preference.get("id", "")
+        ref = db.collection("preferences").document(doc_id)
+
+        if error is None:
+            ref.update({"normalized": normalized, "status": "processed"})
+            preference["normalized"] = normalized
+            preference["status"] = "processed"
+            processed.append(preference)
+            print(f"    Successfully normalized {doc_id}.")
+            continue
+
+        if isinstance(error, str):  # skipped, not a failure
+            print(f"    {doc_id}: {error}")
+            continue
+
+        attempts = int(preference.get("normalizeAttempts") or 0) + 1
+        update = {"normalizeAttempts": attempts}
+        if attempts >= MAX_NORMALIZE_ATTEMPTS:
+            update["status"] = "failed"
+        try:
+            ref.update(update)
+        except Exception as exc:
+            print(f"    Could not record failure for {doc_id}: {exc}")
+        print(
+            f"    WARNING: Failed to normalize {doc_id} "
+            f"(attempt {attempts}/{MAX_NORMALIZE_ATTEMPTS}): {error}"
+        )
 
     print(
         f"    {len(processed)} new preference(s) normalized."
@@ -785,17 +791,86 @@ def print_preferences(
 
 
 # ============================================================
+# CANDIDATE INDEX (avoids the O(preferences x listings) scan)
+# ============================================================
+
+def _listing_text_tokens(listing):
+    return _tokens(
+        f"{listing.get('item', '')} {listing.get('brand', '')} "
+        f"{listing.get('category', '')}"
+    )
+
+
+def _build_listing_index(listings):
+    by_token = {}
+    by_category = {}
+    for i, listing in enumerate(listings):
+        for tok in _listing_text_tokens(listing):
+            by_token.setdefault(tok, set()).add(i)
+        cat = str(listing.get("category", "")).strip().lower()
+        by_category.setdefault(cat, set()).add(i)
+    return by_token, by_category
+
+
+def _candidate_listing_ids(normalized, index, n_listings, w):
+    """
+    Indexes of listings that could possibly reach the edge threshold for this
+    preference, or None meaning "scan everything".
+
+    Without a relevance hit (wanted item / category / keyword) the best score
+    a listing can reach is base - no_relevance_penalty + brand + condition_ok
+    + flexibility term. When that is below the threshold, only listings with
+    a relevance hit matter, and those are found through the inverted index.
+    The result is identical to a full scan (tests/test_candidate_index.py).
+    """
+    keywords = normalized.get("keywords", [])
+    if not isinstance(keywords, list):
+        return None
+    try:
+        flex = float(normalized.get("flexibility", 0.0))
+    except (TypeError, ValueError):
+        flex = 0.0
+    ceiling = (
+        w.base - w.no_relevance_penalty + w.brand + w.condition_ok
+        + flex * w.flexibility_scale
+    )
+    if ceiling >= w.threshold:
+        return None
+
+    by_token, by_category = index
+    cands = set()
+
+    category = str(normalized.get("item_category", "")).strip().lower()
+    if category:
+        cands |= by_category.get(category, set())
+
+    phrases = [str(normalized.get("desired_item", ""))]
+    phrases += [str(k) for k in keywords]
+    for phrase in phrases:
+        for tok in _tokens(phrase):
+            for variant in (tok, tok + "s", tok + "es"):
+                cands |= by_token.get(variant, set())
+    return cands
+
+
+# ============================================================
 # BUILD GRAPH
 # ============================================================
 
 def build_graph(
     listings,
     preferences,
+    weights=None,
+    use_index=True,
+    max_edges_per_buyer=None,
 ):
 
     print(
         "[5] Building weighted exchange graph..."
     )
+
+    w = weights or DEFAULT_WEIGHTS
+    index = _build_listing_index(listings) if use_index else None
 
     graph = nx.DiGraph()
 
@@ -868,7 +943,21 @@ def build_graph(
 
         best_edges = []
 
-        for listing in listings:
+        candidate_ids = (
+            _candidate_listing_ids(
+                normalized, index, len(listings), w
+            )
+            if use_index
+            else None
+        )
+
+        scan = (
+            listings
+            if candidate_ids is None
+            else [listings[i] for i in sorted(candidate_ids)]
+        )
+
+        for listing in scan:
 
             seller = listing.get(
                 "ownerId",
@@ -885,11 +974,12 @@ def build_graph(
             weight = compute_edge_weight(
                 normalized,
                 listing,
+                weights,
             )
 
             if (
                 weight
-                >= EDGE_WEIGHT_THRESHOLD
+                >= (weights or DEFAULT_WEIGHTS).threshold
             ):
 
                 best_edges.append(
@@ -944,10 +1034,20 @@ def build_graph(
         # ADD EDGES
         # ====================================================
 
+        edge_items = best_by_seller.items()
+
+        if max_edges_per_buyer:
+            # Same ordering as cycle_arbitration.prune_graph, applied early
+            # so the graph never holds more than K edges per buyer.
+            edge_items = sorted(
+                edge_items,
+                key=lambda kv: (-kv[1][0], edge_tiebreak(buyer, kv[0])),
+            )[:max_edges_per_buyer]
+
         for seller, (
             weight,
             listing,
-        ) in best_by_seller.items():
+        ) in edge_items:
 
             graph.add_edge(
                 buyer,
@@ -971,11 +1071,12 @@ def build_graph(
                 ),
             )
 
-            print(
-                f"    {buyer} -> {seller} | "
-                f"{listing.get('item', '')} | "
-                f"weight={weight}"
-            )
+            if len(preferences) <= 50:
+                print(
+                    f"    {buyer} -> {seller} | "
+                    f"{listing.get('item', '')} | "
+                    f"weight={weight}"
+                )
 
     print()
 
@@ -995,8 +1096,10 @@ def build_graph(
         buyer,
         seller,
         data,
-    ) in graph.edges(
-        data=True
+    ) in (
+        graph.edges(data=True)
+        if len(preferences) <= 50
+        else []
     ):
 
         print(
@@ -1221,6 +1324,108 @@ def make_match_id(
     return (
         f"match_{digest}"
     )
+
+
+# ============================================================
+# ATOMIC CLAIM + RUN LOCK
+# ============================================================
+
+USER_LOCKS = "userLocks"
+RUN_LOCK_PATH = ("system", "matchingRun")
+RUN_LEASE_SECONDS = 600
+
+
+def _claim_txn(transaction, db, match_ref, match_data, cycle):
+    """
+    Body of the claim transaction (reads first, then writes).
+
+    A user is "locked" by userLocks/{uid} -> matchId, but only while that
+    match is still open, so locks release themselves when a match is
+    declined / expired / completed (no separate cleanup job to forget).
+    """
+    if match_ref.get(transaction=transaction).exists:
+        return "exists"
+
+    lock_refs = [db.collection(USER_LOCKS).document(u) for u in cycle]
+    locks = [ref.get(transaction=transaction) for ref in lock_refs]
+
+    for lock in locks:
+        if not lock.exists:
+            continue
+        other_id = (lock.to_dict() or {}).get("matchId")
+        if not other_id or other_id == match_ref.id:
+            continue
+        other = (
+            db.collection("matches")
+            .document(other_id)
+            .get(transaction=transaction)
+        )
+        if other.exists and (other.to_dict() or {}).get(
+            "status"
+        ) in OPEN_MATCH_STATUSES:
+            return "locked"
+
+    transaction.set(match_ref, match_data)
+    for ref in lock_refs:
+        transaction.set(
+            ref,
+            {"matchId": match_ref.id, "updatedAt": firestore.SERVER_TIMESTAMP},
+        )
+    return "saved"
+
+
+def claim_and_write_match(db, match_ref, match_data, cycle):
+    """Returns "saved", "exists" or "locked"."""
+    transaction = db.transaction()
+    return firestore.transactional(_claim_txn)(
+        transaction, db, match_ref, match_data, cycle
+    )
+
+
+def _run_lock_ref(db):
+    return db.collection(RUN_LOCK_PATH[0]).document(RUN_LOCK_PATH[1])
+
+
+def _acquire_txn(transaction, ref, owner, now, lease):
+    snap = ref.get(transaction=transaction)
+    data = snap.to_dict() or {} if snap.exists else {}
+    until = _as_datetime(data.get("leaseUntil")) if data.get("leaseUntil") else None
+    if until and until > now and data.get("owner") != owner:
+        # Someone else is running: ask them to go round once more so this
+        # trigger's new data is not lost, then back off.
+        transaction.update(ref, {"rerunRequested": True})
+        return False
+    transaction.set(
+        ref,
+        {"owner": owner, "leaseUntil": now + lease, "rerunRequested": False},
+    )
+    return True
+
+
+def acquire_run_lock(db, owner, now=None, lease_seconds=RUN_LEASE_SECONDS):
+    """Single-flight guard: only one matching run at a time across the Cloud
+    Function and local_listener. Leases expire so a crashed run cannot block
+    forever."""
+    now = now or datetime.now(timezone.utc)
+    transaction = db.transaction()
+    return firestore.transactional(_acquire_txn)(
+        transaction,
+        _run_lock_ref(db),
+        owner,
+        now,
+        timedelta(seconds=lease_seconds),
+    )
+
+
+def release_run_lock(db, owner):
+    """Release; returns True if another trigger asked for a re-run."""
+    ref = _run_lock_ref(db)
+    snap = ref.get()
+    data = snap.to_dict() or {} if snap.exists else {}
+    if data.get("owner") != owner:
+        return False
+    ref.set({"owner": None, "leaseUntil": None, "rerunRequested": False})
+    return bool(data.get("rerunRequested"))
 
 
 # ============================================================
@@ -1502,11 +1707,31 @@ def save_matches(
             )
         )
 
-        existing_doc = (
-            existing_ref.get()
-        )
+        # ====================================================
+        # SAVE (atomic: lock check + match write in ONE transaction)
+        # ====================================================
 
-        if existing_doc.exists:
+        if hasattr(db, "transaction"):
+
+            outcome = claim_and_write_match(
+                db,
+                existing_ref,
+                match_data,
+                cycle,
+            )
+
+        else:  # minimal fakes / legacy clients without transactions
+
+            outcome = (
+                "exists"
+                if existing_ref.get().exists
+                else "saved"
+            )
+
+            if outcome == "saved":
+                existing_ref.set(match_data)
+
+        if outcome == "exists":
 
             print(
                 f"    Match already exists: "
@@ -1515,13 +1740,14 @@ def save_matches(
 
             continue
 
-        # ====================================================
-        # SAVE
-        # ====================================================
+        if outcome == "locked":
 
-        existing_ref.set(
-            match_data
-        )
+            print(
+                f"    Skipped {match_id}: a participant is already "
+                f"in another open match (concurrent run)."
+            )
+
+            continue
 
         saved += 1
 
@@ -1893,7 +2119,7 @@ def housekeeping(db):
             print(f"    WARNING: {step.__name__} failed: {exc}")
 
 
-def run_matching(
+def _run_matching_once(
     db,
     *,
     dry_run=False,
@@ -2037,6 +2263,8 @@ def run_matching(
     graph = build_graph(
         listings,
         preferences,
+        weights_from_env(),
+        max_edges_per_buyer=engine_from_env().max_out_degree,
     )
 
     # ========================================================
@@ -2088,11 +2316,27 @@ def run_matching(
             known_items,
         )
 
+    engine = engine_from_env()
+    match_stats = {}
+
     matched_cycles, _unmatched_users, ai_decisions = select_cycles(
         graph,
         max_len=max_cycle_length,
         context=context,
         arbiter=arbiter,
+        max_out_degree=engine.max_out_degree,
+        max_cycles=engine.max_cycles,
+        solver=engine.solver,
+        stats=match_stats,
+    )
+
+    # Cycles are enumerated once, inside select_cycles; reuse its count
+    # instead of enumerating the whole graph a second time for logging.
+    cycles_found = match_stats.get("cycles_enumerated", 0)
+
+    print(
+        f"    {cycles_found} candidate cycle(s) enumerated "
+        f"({match_stats.get('edges_used', 0)} edges used)."
     )
 
     print(
@@ -2103,112 +2347,20 @@ def run_matching(
     print()
 
     print(
-        "    BGCC selected cycles:"
+        "[7] Selected cycle details..."
     )
 
-    for cycle in matched_cycles:
+    if matched_cycles:
 
-        print(
-            f"      {' -> '.join(cycle)}"
-        )
-
-    # ========================================================
-    # CYCLE DETAILS
-    # ========================================================
-
-    print()
-
-    print(
-        "[7] Cycle details..."
-    )
-
-    try:
-
-        discovered_cycles = find_cycles(
-            graph,
-            max_len=(
-                max_cycle_length
-            ),
-        )
-
-    except TypeError:
-
-        try:
-
-            discovered_cycles = find_cycles(
-                graph,
-                max_cycle_length,
-            )
-
-        except TypeError:
-
-            discovered_cycles = find_cycles(
-                graph
-            )
-
-    if discovered_cycles:
-
-        print(
-            f"    {len(discovered_cycles)} "
-            "cycle(s) found:"
-        )
-
-        for (
-            index,
-            raw_cycle,
-        ) in enumerate(
-            discovered_cycles,
-            start=1,
-        ):
-
-            cycle = extract_cycle(
-                raw_cycle
-            )
-
-            if len(cycle) < 2:
-                continue
-
-            try:
-
-                weight = cycle_weight(
-                    graph,
-                    cycle,
-                )
-
-            except Exception:
-
-                weight = 0.0
-
-            try:
-
-                fairness = egalitarian_score(
-                    graph,
-                    cycle,
-                )
-
-            except Exception:
-
-                fairness = 0.0
+        for index, cycle in enumerate(matched_cycles, start=1):
 
             print()
 
-            print(
-                f"    Cycle {index}:"
-            )
+            print(f"    Cycle {index}: {' -> '.join(cycle)}")
 
             print(
-                f"      Users: "
-                f"{' -> '.join(cycle)}"
-            )
-
-            print(
-                f"      Weight: "
-                f"{float(weight):.2f}"
-            )
-
-            print(
-                f"      Egalitarian score: "
-                f"{float(fairness):.2f}"
+                f"      Weight: {cycle_weight(graph, cycle):.2f} | "
+                f"Egalitarian: {egalitarian_score(graph, cycle):.2f}"
             )
 
     else:
@@ -2297,7 +2449,7 @@ def run_matching(
 
     print(
         f"Cycles found: "
-        f"{len(discovered_cycles)}"
+        f"{cycles_found}"
     )
 
     print(
@@ -2316,10 +2468,62 @@ def run_matching(
         "listings": len(listings),
         "pending_preferences": len(pending),
         "users": len(preferences),
-        "cycles_found": len(discovered_cycles),
+        "cycles_found": cycles_found,
         "matched_cycles": len(matched_cycles),
         "dry_run": dry_run,
     }
+
+
+
+def run_matching(
+    db,
+    *,
+    dry_run=False,
+    no_ai=False,
+    max_cycle_length=4,
+    max_reruns=2,
+):
+    """
+    Single-flight wrapper around one matching pass.
+
+    Only one run proceeds at a time (lease lock in Firestore). If another
+    trigger arrived meanwhile, the holder runs again (up to max_reruns), so no
+    new preference is lost and no two runs overlap.
+    """
+    if dry_run or not hasattr(db, "transaction"):
+        return _run_matching_once(
+            db,
+            dry_run=dry_run,
+            no_ai=no_ai,
+            max_cycle_length=max_cycle_length,
+        )
+
+    owner = uuid.uuid4().hex
+
+    if not acquire_run_lock(db, owner):
+        print("Another matching run is in progress; it will re-run for us.")
+        return {"status": "skipped_locked", "matched_cycles": 0}
+
+    summary = {"status": "nothing_to_process", "matched_cycles": 0}
+    try:
+        for _ in range(max_reruns + 1):
+            summary = _run_matching_once(
+                db,
+                dry_run=dry_run,
+                no_ai=no_ai,
+                max_cycle_length=max_cycle_length,
+            )
+            if not release_run_lock(db, owner):
+                owner = None
+                break
+            # A trigger arrived while we ran: take the lock again and re-run.
+            if not acquire_run_lock(db, owner):
+                owner = None
+                break
+    finally:
+        if owner:
+            release_run_lock(db, owner)
+    return summary
 
 
 def main():

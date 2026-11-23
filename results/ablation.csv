@@ -1,0 +1,7 @@
+variant,d_matched,d_edges_pct,jaccard
+no brand term,-5.0,-1.89,0.686
+no condition terms,19.5,4.51,0.623
+no flexibility term,-4.17,-0.26,0.709
+no keyword credit,-4.0,-4.83,0.891
+category = keyword credit,-4.83,-0.98,0.64
+brand+condition+flexibility off,-8.17,0.28,0.538

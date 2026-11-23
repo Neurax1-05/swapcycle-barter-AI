@@ -1,0 +1,4 @@
+pts_item,pts_brand,pts_condition,pts_openness,ahp_item_brand,ahp_item_condition,ahp_item_openness,ahp_brand_condition,ahp_brand_openness,ahp_condition_openness,min_acceptable
+50,10,30,10,5,3,5,0.5,1,2,0.6
+40,15,35,10,4,2,4,0.5,1,3,0.55
+60,5,25,10,7,3,6,0.33,1,2,0.65

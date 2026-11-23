@@ -31,12 +31,24 @@ Guard rails (the AI stays bounded)
   AI is not called at all (cheaper, and deterministic).
 """
 
+import hashlib
 import re
+from collections import defaultdict
 
 import networkx as nx
 
 DEFAULT_TOP_K = 4
 DEFAULT_MIN_WEIGHT_RATIO = 0.6
+
+# Scalability guards (see docs/SCALABILITY.md).
+#   max_out_degree : keep only each user's N best outgoing edges before
+#                    enumerating cycles. Cycle count grows ~ d^L, so this is
+#                    the single most effective lever.
+#   max_cycles     : hard stop for enumeration so one dense graph can never
+#                    hang a Cloud Function; the run proceeds on what was found.
+DEFAULT_MAX_OUT_DEGREE = 12
+DEFAULT_MAX_CYCLES = 200_000
+ILP_MAX_POOL = 20_000  # above this, the exact solver is skipped (greedy used)
 
 
 # ------------------------------------------------------------------
@@ -57,46 +69,155 @@ def egalitarian_score(G, cycle):
     return min(G[u][v]["weight"] for u, v in _edges(cycle))
 
 
-def enumerate_cycles(G, max_len=4):
+def enumerate_cycles(G, max_len=4, max_cycles=None):
     """
     All simple directed cycles with 2 <= length <= max_len.
 
     Uses NetworkX's length_bound so cycles longer than max_len are never
     generated. (Enumerating every cycle and filtering afterwards blows up
     exponentially on larger graphs and breaks the O(n^2 * d^L) claim.)
+
+    max_cycles optionally caps the result (see enumerate_cycles_capped to
+    learn whether the cap was hit).
     """
-    return [
-        list(c)
-        for c in nx.simple_cycles(G, length_bound=max_len)
-        if len(c) >= 2
-    ]
+    return enumerate_cycles_capped(G, max_len, max_cycles)[0]
+
+
+def enumerate_cycles_capped(G, max_len=4, max_cycles=None):
+    """
+    Like enumerate_cycles but returns (cycles, truncated).
+
+    Bounded DFS: every cycle is rooted at its lowest-ranked node and only
+    visits higher-ranked nodes, so each cycle is produced exactly once and
+    the search is O(n * d^(L-1)). This is several times faster than
+    nx.simple_cycles(length_bound=...), which spends most of its time
+    exploring paths that cannot close within the bound.
+    """
+    order = {u: i for i, u in enumerate(G.nodes())}
+    succ = {u: [v for v in G.successors(u) if v != u] for u in G.nodes()}
+    succ_set = {u: set(vs) for u, vs in succ.items()}
+    out = []
+
+    for root in G.nodes():
+        r = order[root]
+        path = [root]
+        on_path = {root}
+
+        # iterative DFS: stack of iterators over successors
+        stack = [iter(succ[root])]
+        while stack:
+            v = next(stack[-1], None)
+            if v is None:
+                stack.pop()
+                on_path.discard(path.pop())
+                continue
+            if order[v] < r or v in on_path:
+                continue
+            path.append(v)
+            on_path.add(v)
+            if root in succ_set[v] and len(path) >= 2:
+                out.append(list(path))
+                if max_cycles is not None and len(out) >= max_cycles:
+                    return out, True
+            if len(path) < max_len:
+                stack.append(iter(succ[v]))
+            else:
+                on_path.discard(path.pop())
+    return out, False
+
+
+def edge_tiebreak(u, v):
+    """
+    Deterministic pseudo-random order for equal-weight edges. Breaking ties by
+    id would make every buyer keep the same alphabetically-first sellers,
+    creating hubs and starving the graph of cycles; hashing spreads the kept
+    edges evenly while staying reproducible.
+    """
+    return hashlib.sha1(f"{u}|{v}".encode("utf-8")).hexdigest()
+
+
+def trim_to_sccs(G):
+    """
+    Keep only edges whose endpoints lie in the same strongly connected
+    component. A directed cycle can only exist inside one SCC, so every other
+    edge (dead ends, one-way chains between groups) can never be part of an
+    exchange and only wastes the degree budget and enumeration time.
+    """
+    comp = {}
+    for i, scc in enumerate(nx.strongly_connected_components(G)):
+        if len(scc) > 1:
+            for u in scc:
+                comp[u] = i
+    H = nx.DiGraph()
+    H.add_nodes_from(G.nodes(data=True))
+    for u, v, data in G.edges(data=True):
+        if u in comp and comp.get(v) == comp[u]:
+            H.add_edge(u, v, **data)
+    return H
+
+
+def prune_graph(G, max_out_degree):
+    """
+    Copy of G reduced for cycle search:
+      1. drop edges that cannot lie on any cycle (outside a shared SCC);
+      2. keep each user's `max_out_degree` highest-weight outgoing edges
+         (ties broken by edge_tiebreak);
+      3. drop edges that the top-k step orphaned (SCC trim again).
+    Cycles in the pruned graph are valid cycles of the original graph.
+    None / 0 disables pruning entirely.
+    """
+    if not max_out_degree:
+        return G
+    base = trim_to_sccs(G)
+    H = nx.DiGraph()
+    H.add_nodes_from(G.nodes(data=True))
+    for u in base.nodes():
+        edges = sorted(
+            base.out_edges(u, data=True),
+            key=lambda e: (-e[2].get("weight", 0.0), edge_tiebreak(u, e[1])),
+        )
+        for _, v, data in edges[:max_out_degree]:
+            H.add_edge(u, v, **data)
+    return trim_to_sccs(H)
 
 
 def _rank_key(G, cycle):
-    # Highest utility first; ties broken deterministically by member ids.
-    return (-round(cycle_weight(G, cycle), 9), tuple(sorted(cycle)))
+    # Highest utility first; ties go to the fairer cycle (egalitarian score),
+    # then deterministically by member ids.
+    return (
+        -round(cycle_weight(G, cycle), 9),
+        -round(egalitarian_score(G, cycle), 9),
+        tuple(sorted(cycle)),
+    )
 
 
 # ------------------------------------------------------------------
 # Selection
 # ------------------------------------------------------------------
 
-def _conflict_set(G, ranked, best, top_k, min_weight_ratio):
-    """
-    Candidate cycles that compete with `best`: they share at least one user
-    with it and are not much worse. `best` is always included and first.
-    """
-    best_users = set(best)
-    floor = min_weight_ratio * cycle_weight(G, best)
-    conflict = [best]
-    for c in ranked:
-        if c is best:
-            continue
-        if len(conflict) >= top_k:
-            break
-        if best_users & set(c) and cycle_weight(G, c) >= floor:
-            conflict.append(c)
-    return conflict
+def _ilp_pack(G, pool):
+    """Exact max-weight set packing over an already-enumerated pool, or None
+    if PuLP is missing / the pool is too large / the solver fails."""
+    if not pool or len(pool) > ILP_MAX_POOL:
+        return None
+    try:
+        import pulp
+    except ImportError:
+        return None
+    try:
+        prob = pulp.LpProblem("CYCLE_PACK", pulp.LpMaximize)
+        x = [pulp.LpVariable(f"x_{i}", cat="Binary") for i in range(len(pool))]
+        prob += pulp.lpSum(cycle_weight(G, c) * x[i] for i, c in enumerate(pool))
+        by_node = defaultdict(list)
+        for i, c in enumerate(pool):
+            for u in c:
+                by_node[u].append(i)
+        for ids in by_node.values():
+            prob += pulp.lpSum(x[i] for i in ids) <= 1
+        prob.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=10))
+        return [pool[i] for i in range(len(pool)) if (x[i].value() or 0) > 0.5]
+    except Exception:
+        return None
 
 
 def select_cycles(
@@ -107,9 +228,18 @@ def select_cycles(
     top_k=DEFAULT_TOP_K,
     min_weight_ratio=DEFAULT_MIN_WEIGHT_RATIO,
     log=print,
+    max_out_degree=None,
+    max_cycles=None,
+    solver="greedy",
+    stats=None,
 ):
     """
     Bounded Greedy Cycle Cover with optional AI arbitration.
+
+    Cycles are enumerated ONCE. Each round then takes the best still-available
+    cycle; picking a cycle retires every cycle sharing a user with it (via a
+    user -> cycles index), so a round costs O(cycles touching the picked
+    users) instead of a fresh enumeration of the whole graph.
 
     context: {user_id: {...qualitative info...}} - users with no entry are
              treated as "no extra information".
@@ -117,25 +247,95 @@ def select_cycles(
              "recommended_candidate" (1-based index into records). Each record
              is {"cycle": [...], "total_utility": x, "egalitarian_score": y}.
              None means plain BGCC.
+    max_out_degree: keep only each user's best N outgoing edges (None = all).
+    max_cycles: stop enumerating after this many cycles (None = no cap).
+    solver: "greedy" (default; supports arbitration) or "ilp" (exact packing
+            over the same pool; no arbitration; falls back to greedy if the
+            pool is too large or PuLP is unavailable).
+    stats: optional dict, filled with cycles_enumerated, truncated, edges_used.
 
     Returns (cycles, remaining_users, decisions) where decisions maps
     frozenset(cycle members) -> details of the AI decision for that cycle.
     """
     context = context or {}
-    remaining = set(G.nodes())
     chosen = []
     decisions = {}
 
+    H = prune_graph(G, max_out_degree)
+    pool, truncated = enumerate_cycles_capped(H, max_len, max_cycles)
+    if stats is not None:
+        stats.update(
+            cycles_enumerated=len(pool),
+            truncated=truncated,
+            edges_used=H.number_of_edges(),
+        )
+    if truncated:
+        log(
+            f"    WARNING: cycle enumeration stopped at {len(pool)} cycles "
+            f"(max_cycles); results use the cycles found so far. Lower "
+            f"max_out_degree to keep the search complete."
+        )
+
+    remaining = set(G.nodes())
+
+    # "auto" = exact packing when no AI arbiter is in play, greedy otherwise.
+    if solver in ("ilp", "auto") and arbiter is None:
+        packed = _ilp_pack(G, pool)
+        if packed is not None:
+            # CBC stops at its time limit with its best incumbent, which is
+            # not guaranteed to beat greedy; never return something worse.
+            greedy, _, _ = select_cycles(
+                G, max_len, solver="greedy", log=lambda *a: None,
+                max_out_degree=max_out_degree, max_cycles=max_cycles,
+            )
+            if sum(cycle_weight(G, c) for c in greedy) > sum(
+                cycle_weight(G, c) for c in packed
+            ) + 1e-9:
+                packed = greedy
+            packed.sort(key=lambda c: _rank_key(G, c))
+            for c in packed:
+                remaining -= set(c)
+            return packed, remaining, decisions
+        log("    ILP unavailable or pool too large; using greedy.")
+
+    ranked = sorted(pool, key=lambda c: _rank_key(G, c))
+    weights = [cycle_weight(G, c) for c in ranked]
+    members = [set(c) for c in ranked]
+    alive = [True] * len(ranked)
+    by_user = defaultdict(list)
+    for i, c in enumerate(ranked):
+        for u in c:
+            by_user[u].append(i)
+
+    ptr = 0
     while True:
-        candidates = enumerate_cycles(G.subgraph(remaining), max_len)
-        if not candidates:
+        while ptr < len(ranked) and not alive[ptr]:
+            ptr += 1
+        if ptr == len(ranked):
             break
 
-        ranked = sorted(candidates, key=lambda c: _rank_key(G, c))
-        best = ranked[0]
+        best_i = ptr
+        best = ranked[best_i]
         pick = best
+        best_users = members[best_i]
 
-        conflict = _conflict_set(G, ranked, best, top_k, min_weight_ratio)
+        # Competing cycles: alive, share a user with best, not much worse.
+        floor = min_weight_ratio * weights[best_i]
+        rivals = sorted(
+            {
+                i
+                for u in best
+                for i in by_user[u]
+                if alive[i] and i != best_i
+            }
+        )
+        conflict = [best]
+        for i in rivals:
+            if len(conflict) >= top_k:
+                break
+            if weights[i] >= floor:
+                conflict.append(ranked[i])
+
         someone_has_context = any(u in context for c in conflict for u in c)
 
         if arbiter is not None and len(conflict) >= 2 and someone_has_context:
@@ -186,7 +386,11 @@ def select_cycles(
                 )
 
         chosen.append(pick)
-        remaining -= set(pick)
+        pick_users = set(pick)
+        remaining -= pick_users
+        for u in pick_users:
+            for i in by_user[u]:
+                alive[i] = False
 
     return chosen, remaining, decisions
 

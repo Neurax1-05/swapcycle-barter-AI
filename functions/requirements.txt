@@ -3,3 +3,4 @@ firebase-admin>=6.5
 networkx>=3.2
 requests>=2.31
 python-dotenv>=1.0
+pulp>=2.8,<4
